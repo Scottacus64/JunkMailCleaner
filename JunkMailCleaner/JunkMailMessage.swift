@@ -18,6 +18,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let contentAnalysis: MessageContentAnalysis
     let bodyTextAnalysis: BodyTextAnalysis
     let microsoftImpersonationAnalysis: MicrosoftImpersonationAnalysis
+    let brandImpersonationAnalysis: BrandImpersonationAnalysis
+    let invoiceFraudAnalysis: InvoiceFraudAnalysis
     let combinedAnalysis: CombinedMessageAnalysis
 
     init(
@@ -57,11 +59,24 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             authenticationResults: authenticationResults
         )
         self.microsoftImpersonationAnalysis = microsoftImpersonationAnalysis
+        let brandImpersonationAnalysis = BrandImpersonationAnalyzer.analyze(
+            senderDisplayName: senderName,
+            senderAddress: senderAddress
+        )
+        self.brandImpersonationAnalysis = brandImpersonationAnalysis
+        let invoiceFraudAnalysis = InvoiceFraudAnalyzer.analyze(
+            senderAddress: senderAddress,
+            subject: subject,
+            body: body
+        )
+        self.invoiceFraudAnalysis = invoiceFraudAnalysis
         combinedAnalysis = CombinedMessageAnalyzer.combine(
             senderAnalysis: senderAnalysis,
             contentAnalysis: contentAnalysis,
             bodyTextAnalysis: bodyTextAnalysis,
-            microsoftImpersonationAnalysis: microsoftImpersonationAnalysis
+            microsoftImpersonationAnalysis: microsoftImpersonationAnalysis,
+            brandImpersonationAnalysis: brandImpersonationAnalysis,
+            invoiceFraudAnalysis: invoiceFraudAnalysis
         )
     }
 }

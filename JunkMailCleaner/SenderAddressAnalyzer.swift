@@ -11,6 +11,7 @@ nonisolated struct SenderAddressAnalysis: Sendable {
     let riskLevel: SenderRiskLevel
     let reason: String
     let isAutoDeleteCandidate: Bool
+    let isHighRiskForAutomaticDeletion: Bool
 }
 
 nonisolated struct SenderDomainSyntaxAnalysis: Sendable {
@@ -23,6 +24,36 @@ nonisolated struct SenderDomainSyntaxAnalysis: Sendable {
 
 nonisolated enum SenderAddressAnalyzer {
     nonisolated private static let unknownTLDScore = 0
+    nonisolated private static let randomFreeMailUsernameScore = 30
+    nonisolated private static let genericPromotionalDomainScore = 25
+    nonisolated private static let majorFreeMailDomains: Set<String> = [
+        "gmail.com", "outlook.com", "hotmail.com", "live.com",
+        "yahoo.com", "icloud.com", "aol.com"
+    ]
+    nonisolated private static let benignLocalParts: Set<String> = [
+        "health", "info", "marketing", "member", "newsletter", "support"
+    ]
+    nonisolated private static let promotionalWordGroups: [[String]] = [
+        ["daily"],
+        ["upgrade"],
+        ["sale", "sales"],
+        ["surge"],
+        ["deal", "deals"],
+        ["promo"],
+        ["offer", "offers"],
+        ["saving", "savings"],
+        ["discount", "discounts"],
+        ["reward", "rewards"],
+        ["benefit", "benefits"],
+        ["special", "specials"],
+        ["bonus"],
+        ["bargain"],
+        ["clearance"],
+        ["coupon", "coupons"]
+    ]
+    nonisolated private static let promotionAmplifyingTLDs: Set<String> = [
+        "buzz", "click", "shop", "space", "top"
+    ]
 
     nonisolated static func analyze(_ address: String) -> SenderAddressAnalysis {
         let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -32,7 +63,8 @@ nonisolated enum SenderAddressAnalyzer {
             return makeAnalysis(
                 score: 95,
                 reasons: ["Malformed sender email address"],
-                isAutoDeleteCandidate: false
+                isAutoDeleteCandidate: false,
+                isHighRiskForAutomaticDeletion: true
             )
         }
 
@@ -50,11 +82,20 @@ nonisolated enum SenderAddressAnalyzer {
         )
         analyzeLocalPart(localPart, score: &score, reasons: &reasons)
 
+        let preSupplementalScore = score
+        analyzeSupplementalSignals(
+            localPart: localPart,
+            domain: domain,
+            score: &score,
+            reasons: &reasons
+        )
+
         if reasons.isEmpty {
             return makeAnalysis(
                 score: 0,
                 reasons: ["No suspicious sender-address patterns"],
-                isAutoDeleteCandidate: false
+                isAutoDeleteCandidate: false,
+                isHighRiskForAutomaticDeletion: false
             )
         }
 
@@ -67,7 +108,8 @@ nonisolated enum SenderAddressAnalyzer {
         return makeAnalysis(
             score: finalScore,
             reasons: reasonText,
-            isAutoDeleteCandidate: finalScore >= 70 && strongEvidenceCount >= 2
+            isAutoDeleteCandidate: preSupplementalScore >= 70 && strongEvidenceCount >= 2,
+            isHighRiskForAutomaticDeletion: preSupplementalScore >= 70
         )
     }
 
@@ -102,6 +144,7 @@ nonisolated enum SenderAddressAnalyzer {
             add(labelSignals.score, reason, score: &score, reasons: &reasons)
             strongEvidenceCount += labelSignals.strongSignalCount
         }
+
     }
 
     nonisolated static func analyzeDomainSyntax(_ domain: String) -> SenderDomainSyntaxAnalysis {
@@ -176,6 +219,64 @@ nonisolated enum SenderAddressAnalyzer {
         if signals.score >= 30 {
             add(25, "Unusually long random-looking local part", score: &score, reasons: &reasons)
         }
+    }
+
+    nonisolated private static func analyzeSupplementalSignals(
+        localPart: String,
+        domain: String,
+        score: inout Int,
+        reasons: inout [(score: Int, text: String)]
+    ) {
+        if majorFreeMailDomains.contains(domain.lowercased())
+            && isRandomLookingFreeMailUsername(localPart) {
+            add(
+                randomFreeMailUsernameScore,
+                "Random-looking free-mail username",
+                score: &score,
+                reasons: &reasons
+            )
+        }
+
+        if isGenericPromotionalDomain(domain) {
+            add(
+                genericPromotionalDomainScore,
+                "Generic promotional sender domain",
+                score: &score,
+                reasons: &reasons
+            )
+        }
+    }
+
+    nonisolated private static func isRandomLookingFreeMailUsername(_ localPart: String) -> Bool {
+        let username = localPart.lowercased()
+        guard (8...20).contains(username.count),
+              !benignLocalParts.contains(username),
+              username.allSatisfy(\.isLetter) else {
+            return false
+        }
+
+        let vowelCount = username.filter { "aeiou".contains($0) }.count
+        let consonantRatio = Double(username.count - vowelCount) / Double(username.count)
+        let hasEnoughEntropy = shannonEntropy(of: username) >= 2.25
+        return vowelCount == 0
+            && consonantRatio >= 0.875
+            && longestConsonantRun(in: username) >= 8
+            && hasEnoughEntropy
+    }
+
+    nonisolated private static func isGenericPromotionalDomain(_ domain: String) -> Bool {
+        let labels = domain.lowercased().split(separator: ".").map(String.init)
+        guard labels.count >= 2, let tld = labels.last else { return false }
+
+        // This intentionally examines the registrable-looking label only, so a
+        // promotional subdomain cannot make an otherwise ordinary domain score.
+        let domainLabel = labels[labels.count - 2]
+            .replacingOccurrences(of: "-", with: "")
+        let promotionalConceptCount = promotionalWordGroups.count { variants in
+            variants.contains(where: domainLabel.contains)
+        }
+
+        return promotionalConceptCount >= 2 && promotionAmplifyingTLDs.contains(tld)
     }
 
     nonisolated private static func randomnessSignals(for label: String) -> (
@@ -386,7 +487,8 @@ nonisolated enum SenderAddressAnalyzer {
     nonisolated private static func makeAnalysis(
         score: Int,
         reasons: [String],
-        isAutoDeleteCandidate: Bool
+        isAutoDeleteCandidate: Bool,
+        isHighRiskForAutomaticDeletion: Bool
     ) -> SenderAddressAnalysis {
         let riskLevel: SenderRiskLevel
         switch score {
@@ -402,7 +504,8 @@ nonisolated enum SenderAddressAnalyzer {
             score: score,
             riskLevel: riskLevel,
             reason: reasons.joined(separator: "; "),
-            isAutoDeleteCandidate: isAutoDeleteCandidate
+            isAutoDeleteCandidate: isAutoDeleteCandidate,
+            isHighRiskForAutomaticDeletion: isHighRiskForAutomaticDeletion
         )
     }
 }

@@ -12,18 +12,6 @@ nonisolated struct MicrosoftImpersonationAnalysis: Sendable {
 }
 
 nonisolated enum MicrosoftImpersonationAnalyzer {
-    nonisolated private static let approvedDomains = [
-        "microsoft.com",
-        "microsoftonline.com",
-        "microsoft365.com",
-        "microsoftstore.com",
-        "office.com",
-        "office365.com",
-        "onedrive.com",
-        "windows.com",
-        "azure.com"
-    ]
-
     nonisolated static func claimsMicrosoftIdentity(
         senderDisplayName: String,
         senderAddress: String,
@@ -92,7 +80,9 @@ nonisolated enum MicrosoftImpersonationAnalyzer {
             )
         }
 
-        let isApprovedDomain = senderDomain.map(isApprovedMicrosoftDomain) ?? false
+        let isApprovedDomain = senderDomain.map {
+            BrandImpersonationAnalyzer.isAllowedDomain($0, for: "Microsoft")
+        } ?? false
         let failedMechanisms = ["spf", "dkim", "dmarc"].filter {
             authentication[$0] == "fail"
         }
@@ -138,12 +128,6 @@ nonisolated enum MicrosoftImpersonationAnalyzer {
             return nil
         }
         return domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-    }
-
-    nonisolated private static func isApprovedMicrosoftDomain(_ domain: String) -> Bool {
-        approvedDomains.contains { approvedDomain in
-            domain == approvedDomain || domain.hasSuffix("." + approvedDomain)
-        }
     }
 
     nonisolated private static func parseAuthenticationResults(_ value: String) -> [String: String] {

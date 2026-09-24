@@ -84,4 +84,42 @@ final class SenderAddressAnalyzerTests: XCTestCase {
             XCTAssertEqual(syntax.riskPoints, 0, tld)
         }
     }
+
+    func testRandomLookingFreeMailUsernameIsDetected() {
+        let analysis = SenderAddressAnalyzer.analyze("zvhdhssg@gmail.com")
+
+        XCTAssertEqual(analysis.score, 30)
+        XCTAssertEqual(analysis.reason, "Random-looking free-mail username")
+        XCTAssertFalse(analysis.isAutoDeleteCandidate)
+    }
+
+    func testOrdinaryFreeMailUsernamesAreNotDetected() {
+        for address in ["normal.person@gmail.com", "johnsmith@gmail.com"] {
+            let analysis = SenderAddressAnalyzer.analyze(address)
+
+            XCTAssertEqual(analysis.score, 0, address)
+            XCTAssertEqual(analysis.reason, "No suspicious sender-address patterns", address)
+        }
+    }
+
+    func testKnownGoodAddressesReceiveNoNewSenderRisk() {
+        for address in ["marketing@chitubox.com", "info@hedbergpubliclibrary.org"] {
+            let analysis = SenderAddressAnalyzer.analyze(address)
+
+            XCTAssertEqual(analysis.score, 0, address)
+        }
+    }
+
+    func testGenericPromotionalDomainsAreDetectedWithoutBlockingTheirTLDs() {
+        for address in ["health@dailyupgrade.space", "member@salesurge.shop"] {
+            let analysis = SenderAddressAnalyzer.analyze(address)
+
+            XCTAssertEqual(analysis.score, 25, address)
+            XCTAssertEqual(analysis.reason, "Generic promotional sender domain", address)
+            XCTAssertFalse(analysis.isAutoDeleteCandidate, address)
+        }
+
+        XCTAssertEqual(SenderAddressAnalyzer.analyze("hello@artisan.shop").score, 0)
+        XCTAssertEqual(SenderAddressAnalyzer.analyze("team@makers.space").score, 0)
+    }
 }

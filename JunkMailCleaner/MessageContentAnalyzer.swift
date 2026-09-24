@@ -347,17 +347,22 @@ nonisolated enum CombinedMessageAnalyzer {
         senderAnalysis: SenderAddressAnalysis,
         contentAnalysis: MessageContentAnalysis,
         bodyTextAnalysis: BodyTextAnalysis,
-        microsoftImpersonationAnalysis: MicrosoftImpersonationAnalysis
+        microsoftImpersonationAnalysis: MicrosoftImpersonationAnalysis,
+        brandImpersonationAnalysis: BrandImpersonationAnalysis = .none,
+        invoiceFraudAnalysis: InvoiceFraudAnalysis = .none
     ) -> CombinedMessageAnalysis {
         let riskLevel: SenderRiskLevel
         if senderAnalysis.riskLevel == .high
             || contentAnalysis.riskLevel == .high
             || bodyTextAnalysis.riskLevel == .high
-            || microsoftImpersonationAnalysis.riskLevel == .high {
+            || microsoftImpersonationAnalysis.riskLevel == .high
+            || invoiceFraudAnalysis.riskLevel == .high {
             riskLevel = .high
         } else if senderAnalysis.riskLevel == .medium
             || contentAnalysis.riskLevel == .medium
-            || bodyTextAnalysis.riskLevel == .medium {
+            || bodyTextAnalysis.riskLevel == .medium
+            || brandImpersonationAnalysis.riskLevel == .medium
+            || invoiceFraudAnalysis.riskLevel == .medium {
             riskLevel = .medium
         } else {
             riskLevel = .low
@@ -376,6 +381,14 @@ nonisolated enum CombinedMessageAnalyzer {
         if let reason = microsoftImpersonationAnalysis.reason {
             reasons.append(reason)
         }
+        if let reason = brandImpersonationAnalysis.reason,
+           microsoftImpersonationAnalysis.reason == nil
+            || brandImpersonationAnalysis.claimedBrand != "Microsoft" {
+            reasons.append(reason)
+        }
+        if let reason = invoiceFraudAnalysis.reason {
+            reasons.append(reason)
+        }
         if reasons.isEmpty {
             reasons.append(senderAnalysis.reason)
         }
@@ -385,11 +398,13 @@ nonisolated enum CombinedMessageAnalyzer {
                 senderAnalysis.score,
                 contentAnalysis.score,
                 bodyTextAnalysis.score,
-                microsoftImpersonationAnalysis.score
+                microsoftImpersonationAnalysis.score,
+                brandImpersonationAnalysis.score,
+                invoiceFraudAnalysis.score
             ),
             riskLevel: riskLevel,
             reason: reasons.joined(separator: "; "),
-            isAutoDeleteCandidate: senderAnalysis.riskLevel == .high
+            isAutoDeleteCandidate: senderAnalysis.isHighRiskForAutomaticDeletion
                 || contentAnalysis.isAutoDeleteCandidate
                 || bodyTextAnalysis.isAutoDeleteCandidate
                 || microsoftImpersonationAnalysis.riskLevel == .high

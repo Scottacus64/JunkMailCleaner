@@ -2,12 +2,12 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var messages: [JunkMailMessage] = []
-    @State private var selectedMessageIDs: Set<MailMessageReference> = []
     @State private var isScanning = false
     @State private var isMoving = false
     @State private var errorMessage: String?
     @State private var resultMessage: String?
     @State private var hasScanned = false
+    @State private var hasStartedInitialScan = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +16,11 @@ struct ContentView: View {
             content
         }
         .frame(minWidth: 1_250, minHeight: 520)
+        .task {
+            guard !hasStartedInitialScan else { return }
+            hasStartedInitialScan = true
+            scanJunkMail()
+        }
     }
 
     private var header: some View {
@@ -95,22 +100,13 @@ struct ContentView: View {
     private var selectionControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button("Clear Selection", action: clearSelection)
-                    .disabled(selectedMessageIDs.isEmpty || isMoving)
-
-                Divider()
-                    .frame(height: 20)
-
-                Button("Nuke", action: moveSelectedMessages)
-                    .disabled(selectedMessageIDs.isEmpty || isMoving)
+                Button("Nuke", action: movePositiveRiskMessages)
+                    .disabled(positiveRiskMessages.isEmpty || isMoving)
 
                 if isMoving {
                     ProgressView()
                         .controlSize(.small)
                 }
-
-                Text("\(selectedMessageIDs.count) selected")
-                    .foregroundStyle(.secondary)
 
                 Spacer()
             }
@@ -130,11 +126,16 @@ struct ContentView: View {
         Table(messages) {
                 TableColumn("") { message in
                     Toggle(
-                        "Select message from \(message.senderAddress)",
-                        isOn: selectionBinding(for: message.reference)
+                        "Included when using Nuke because risk is greater than zero",
+                        isOn: .constant(message.combinedAnalysis.score > 0)
                     )
                     .labelsHidden()
-                    .disabled(isMoving)
+                    .allowsHitTesting(false)
+                    .help(
+                        message.combinedAnalysis.score > 0
+                            ? "Included when using Nuke"
+                            : "Not included when using Nuke"
+                    )
                 }
                 .width(28)
 
@@ -177,11 +178,6 @@ struct ContentView: View {
                 }
                 .width(min: 250, ideal: 320)
 
-                TableColumn("Auto-delete Candidate") { message in
-                    Text(message.combinedAnalysis.isAutoDeleteCandidate ? "YES" : "NO")
-                        .fontWeight(message.combinedAnalysis.isAutoDeleteCandidate ? .semibold : .regular)
-                }
-                .width(min: 135, ideal: 150)
             }
     }
 
@@ -199,42 +195,18 @@ struct ContentView: View {
         messages.count { $0.combinedAnalysis.riskLevel == riskLevel }
     }
 
-    private func selectionBinding(for reference: MailMessageReference) -> Binding<Bool> {
-        Binding {
-            selectedMessageIDs.contains(reference)
-        } set: { isSelected in
-            if isSelected {
-                selectedMessageIDs.insert(reference)
-            } else {
-                selectedMessageIDs.remove(reference)
-            }
-        }
-    }
-
-    private func clearSelection() {
-        selectedMessageIDs.removeAll()
-    }
-
-    private func highRiskReferences(
-        in messages: [JunkMailMessage]
-    ) -> Set<MailMessageReference> {
-        Set(
-            messages
-                .filter { $0.combinedAnalysis.riskLevel == .high }
-                .map(\.reference)
-        )
+    private var positiveRiskMessages: [JunkMailMessage] {
+        messages.filter { $0.combinedAnalysis.score > 0 }
     }
 
     private func scanJunkMail() {
         isScanning = true
         errorMessage = nil
         resultMessage = nil
-        selectedMessageIDs.removeAll()
 
         Task {
             do {
                 messages = try await MailService.fetchJunkMessages()
-                selectedMessageIDs = highRiskReferences(in: messages)
                 hasScanned = true
             } catch {
                 messages = []
@@ -244,9 +216,12 @@ struct ContentView: View {
         }
     }
 
-    private func moveSelectedMessages() {
-        let selectedMessages = messages.filter { selectedMessageIDs.contains($0.reference) }
-        guard !selectedMessages.isEmpty else { return }
+    private func movePositiveRiskMessages() {
+        moveMessagesToTrash(positiveRiskMessages)
+    }
+
+    private func moveMessagesToTrash(_ messagesToMove: [JunkMailMessage]) {
+        guard !messagesToMove.isEmpty else { return }
 
         isMoving = true
         resultMessage = nil
@@ -254,14 +229,13 @@ struct ContentView: View {
         Task {
             do {
                 let moveResult = try await MailService.moveMessagesToTrash(
-                    selectedMessages.map(\.reference)
+                    messagesToMove.map(\.reference)
                 )
-                resultMessage = moveResultDescription(moveResult, selectedMessages: selectedMessages)
+                resultMessage = moveResultDescription(moveResult, selectedMessages: messagesToMove)
 
                 do {
                     messages = try await MailService.fetchJunkMessages()
                     hasScanned = true
-                    selectedMessageIDs = highRiskReferences(in: messages)
                 } catch {
                     resultMessage = "\(resultMessage ?? "") The Junk mailbox could not be rescanned: \(error.localizedDescription)"
                 }
