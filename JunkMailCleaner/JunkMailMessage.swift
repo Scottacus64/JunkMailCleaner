@@ -32,7 +32,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         subject: String,
         dateReceived: Date,
         body: String,
-        authenticationResults: String
+        authenticationResults: String,
+        imageText: String = ""
     ) {
         self.reference = reference
         self.senderName = senderName
@@ -67,7 +68,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         let invoiceFraudAnalysis = InvoiceFraudAnalyzer.analyze(
             senderAddress: senderAddress,
             subject: subject,
-            body: body
+            body: body,
+            imageText: imageText
         )
         self.invoiceFraudAnalysis = invoiceFraudAnalysis
         combinedAnalysis = CombinedMessageAnalyzer.combine(

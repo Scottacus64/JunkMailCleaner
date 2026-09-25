@@ -3,6 +3,29 @@ import XCTest
 @testable import JunkMailCleaner
 
 final class SpamHeuristicsIntegrationTests: XCTestCase {
+    func testImageOnlyPayPalInvoiceScamScoresOneHundredWithoutAutoDelete() {
+        let message = makeMessage(
+            senderName: "Jacob Bernice",
+            senderAddress: "jacob2bernice080@icloud.com",
+            subject: "Re: Thank You for Buying—Your Package Is Set",
+            imageText: """
+            PayPal INVOICE
+            Your account has been debited. Amount Paid for this transaction.
+            Merchant: Amazon.com
+            Contact Customer Support at (888) 555-1212 for a refund.
+            """
+        )
+
+        XCTAssertEqual(message.combinedAnalysis.score, 100)
+        XCTAssertEqual(
+            message.combinedAnalysis.reason,
+            "Invoice/payment message from free-mail account (image text); "
+                + "Financial brand/domain mismatch: PayPal (image text); "
+                + "Payment message directs recipient to support phone number (image text)"
+        )
+        XCTAssertFalse(message.combinedAnalysis.isAutoDeleteCandidate)
+    }
+
     func testPayPalInvoiceScamFromFreeMailScoresOneHundredWithoutAutoDelete() {
         let message = makeMessage(
             senderName: "Jacob Bernice",
@@ -79,7 +102,8 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         senderName: String,
         senderAddress: String,
         subject: String,
-        body: String = ""
+        body: String = "",
+        imageText: String = ""
     ) -> JunkMailMessage {
         JunkMailMessage(
             reference: MailMessageReference(
@@ -95,7 +119,8 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
             subject: subject,
             dateReceived: Date(timeIntervalSince1970: 0),
             body: body,
-            authenticationResults: ""
+            authenticationResults: "",
+            imageText: imageText
         )
     }
 }

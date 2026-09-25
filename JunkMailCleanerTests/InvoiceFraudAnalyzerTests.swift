@@ -101,6 +101,24 @@ final class InvoiceFraudAnalyzerTests: XCTestCase {
         XCTAssertEqual(analysis.score, 0)
     }
 
+    func testOCRDerivedReasonsAreMarkedAsImageText() {
+        let analysis = InvoiceFraudAnalyzer.analyze(
+            senderAddress: "notice@icloud.com",
+            subject: "Purchase details",
+            body: "",
+            imageText: "PayPal invoice. Your account was debited. Amount paid for transaction."
+        )
+
+        XCTAssertEqual(analysis.score, 90)
+        XCTAssertEqual(
+            analysis.reasons,
+            [
+                "Invoice/payment message from free-mail account (image text)",
+                "Financial brand/domain mismatch: PayPal (image text)"
+            ]
+        )
+    }
+
     private func analyze(
         address: String,
         subject: String,

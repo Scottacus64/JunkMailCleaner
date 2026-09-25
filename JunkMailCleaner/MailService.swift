@@ -23,6 +23,7 @@ nonisolated private struct ScannedMessageMetadata {
 nonisolated private struct MessageContentFields {
     let body: String
     let authenticationResults: String
+    let imageText: String
 }
 
 enum MailService {
@@ -143,16 +144,28 @@ enum MailService {
                 return message.reference.messageID
             }
         ).sorted()
+        let imageMessageIDs = Set<String>(
+            metadata.compactMap { message in
+                guard message.senderAnalysis.riskLevel != .high,
+                      !message.reference.messageID.isEmpty else {
+                    return nil
+                }
+                return message.reference.messageID
+            }
+        ).sorted()
         var contentByMessageID: [String: MessageContentFields] = [:]
 
         if let accountIdentifier = metadata.first?.reference.accountIdentifier,
-           !contentMessageIDs.isEmpty || !authenticationMessageIDs.isEmpty {
+           !contentMessageIDs.isEmpty
+            || !authenticationMessageIDs.isEmpty
+            || !imageMessageIDs.isEmpty {
             do {
                 let contentStart = Date()
                 contentByMessageID = try executeContentScript(
                     accountIdentifier: accountIdentifier,
                     bodyMessageIDs: contentMessageIDs,
-                    authenticationMessageIDs: authenticationMessageIDs
+                    authenticationMessageIDs: authenticationMessageIDs,
+                    imageMessageIDs: imageMessageIDs
                 )
                 print(
                     "[JunkMailCleaner] Loaded message details in "
@@ -176,25 +189,33 @@ enum MailService {
                 subject: metadata.subject,
                 dateReceived: metadata.dateReceived,
                 body: content?.body ?? "",
-                authenticationResults: content?.authenticationResults ?? ""
+                authenticationResults: content?.authenticationResults ?? "",
+                imageText: content?.imageText ?? ""
             )
             logAnalysis(for: message)
             return message
         }
 
-        return messages.sorted { $0.dateReceived > $1.dateReceived }
+        return messages.sorted { first, second in
+            if first.combinedAnalysis.score != second.combinedAnalysis.score {
+                return first.combinedAnalysis.score > second.combinedAnalysis.score
+            }
+            return first.dateReceived > second.dateReceived
+        }
     }
 
     nonisolated private static func executeContentScript(
         accountIdentifier: String,
         bodyMessageIDs: [String],
-        authenticationMessageIDs: [String]
+        authenticationMessageIDs: [String],
+        imageMessageIDs: [String]
     ) throws -> [String: MessageContentFields] {
         guard let script = NSAppleScript(
             source: contentScript(
                 accountIdentifier: accountIdentifier,
                 bodyMessageIDs: bodyMessageIDs,
-                authenticationMessageIDs: authenticationMessageIDs
+                authenticationMessageIDs: authenticationMessageIDs,
+                imageMessageIDs: imageMessageIDs
             )
         ) else {
             throw MailServiceError.couldNotCreateScript
@@ -214,19 +235,22 @@ enum MailService {
 
         for index in 1...result.numberOfItems {
             guard let row = result.atIndex(index),
-                  row.numberOfItems == 5,
+                  row.numberOfItems == 6,
                   let messageID = row.atIndex(1)?.stringValue else {
                 continue
             }
 
             if row.atIndex(2)?.booleanValue == true {
+                let rawSource = row.atIndex(5)?.stringValue ?? ""
+                let ocrResult = EmbeddedImageOCRAnalyzer.recognizeText(in: rawSource)
                 fieldsByMessageID[messageID] = MessageContentFields(
                     body: row.atIndex(3)?.stringValue ?? "",
-                    authenticationResults: row.atIndex(4)?.stringValue ?? ""
+                    authenticationResults: row.atIndex(4)?.stringValue ?? "",
+                    imageText: ocrResult.recognizedText
                 )
             } else {
                 fieldsByMessageID.removeValue(forKey: messageID)
-                let message = row.atIndex(5)?.stringValue ?? "Unknown Apple Mail error"
+                let message = row.atIndex(6)?.stringValue ?? "Unknown Apple Mail error"
                 print("[JunkMailCleaner] Content unavailable for Message-ID \(messageID): \(message)")
             }
         }
@@ -406,13 +430,17 @@ enum MailService {
     nonisolated private static func contentScript(
         accountIdentifier: String,
         bodyMessageIDs: [String],
-        authenticationMessageIDs: [String]
+        authenticationMessageIDs: [String],
+        imageMessageIDs: [String]
     ) -> String {
         let bodyIdentifierList = bodyMessageIDs.map(appleScriptString).joined(separator: ", ")
         let authenticationIdentifierList = authenticationMessageIDs
             .map(appleScriptString)
             .joined(separator: ", ")
-        let requestedIdentifierList = Set(bodyMessageIDs + authenticationMessageIDs)
+        let imageIdentifierList = imageMessageIDs.map(appleScriptString).joined(separator: ", ")
+        let requestedIdentifierList = Set(
+            bodyMessageIDs + authenticationMessageIDs + imageMessageIDs
+        )
             .sorted()
             .map(appleScriptString)
             .joined(separator: ", ")
@@ -424,6 +452,7 @@ enum MailService {
                 set requestedMessageIDs to {\#(requestedIdentifierList)}
                 set requestedBodyMessageIDs to {\#(bodyIdentifierList)}
                 set requestedAuthenticationMessageIDs to {\#(authenticationIdentifierList)}
+                set requestedImageMessageIDs to {\#(imageIdentifierList)}
                 set hotmailAccount to missing value
 
                 repeat with candidateAccount in accounts
@@ -460,7 +489,7 @@ enum MailService {
                         set candidateMessageID to message id of candidateMessage
                         if candidateMessageID is not missing value and requestedMessageIDs contains candidateMessageID then
                             if foundMessageIDs contains candidateMessageID then
-                                set end of resultRows to {candidateMessageID, false, "", "", "Message-ID is not unique in the Junk mailbox. (1006)"}
+                                set end of resultRows to {candidateMessageID, false, "", "", "", "Message-ID is not unique in the Junk mailbox. (1006)"}
                             else
                                 set end of foundMessageIDs to candidateMessageID
                                 set messageBody to ""
@@ -483,7 +512,15 @@ enum MailService {
                                         end repeat
                                     end try
                                 end if
-                                set end of resultRows to {candidateMessageID, true, messageBody, authenticationText, ""}
+
+                                set messageSource to ""
+                                if requestedImageMessageIDs contains candidateMessageID then
+                                    try
+                                        set messageSource to source of candidateMessage as text
+                                        if messageSource is missing value then set messageSource to ""
+                                    end try
+                                end if
+                                set end of resultRows to {candidateMessageID, true, messageBody, authenticationText, messageSource, ""}
                             end if
                         end if
                     on error errorMessage number errorNumber
@@ -491,14 +528,14 @@ enum MailService {
                         try
                             set failedMessageID to message id of candidateMessage
                         end try
-                        set end of resultRows to {failedMessageID, false, "", "", errorMessage & " (" & errorNumber & ")"}
+                        set end of resultRows to {failedMessageID, false, "", "", "", errorMessage & " (" & errorNumber & ")"}
                     end try
                 end repeat
 
                 repeat with requestedMessageID in requestedMessageIDs
                     set requestedIDText to requestedMessageID as text
                     if foundMessageIDs does not contain requestedIDText then
-                        set end of resultRows to {requestedIDText, false, "", "", "Message is no longer in the Junk mailbox. (1005)"}
+                        set end of resultRows to {requestedIDText, false, "", "", "", "Message is no longer in the Junk mailbox. (1005)"}
                     end if
                 end repeat
 

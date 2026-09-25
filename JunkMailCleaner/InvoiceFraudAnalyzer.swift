@@ -101,14 +101,42 @@ nonisolated enum InvoiceFraudAnalyzer {
     nonisolated static func analyze(
         senderAddress: String,
         subject: String,
-        body: String
+        body: String,
+        imageText: String = ""
     ) -> InvoiceFraudAnalysis {
-        let text = normalize(subject + "\n" + body)
+        let baseline = evidence(
+            senderAddress: senderAddress,
+            text: normalize(subject + "\n" + body),
+            phoneSearchText: body
+        )
+        guard !imageText.isEmpty else {
+            return makeAnalysis(score: baseline.score, reasons: baseline.reasons)
+        }
+
+        let withImageText = evidence(
+            senderAddress: senderAddress,
+            text: normalize(subject + "\n" + body + "\n" + imageText),
+            phoneSearchText: body + "\n" + imageText
+        )
+        let reasons = withImageText.reasons.map { reason in
+            baseline.reasons.contains(reason) ? reason : reason + " (image text)"
+        }
+        for reason in reasons where reason.hasSuffix("(image text)") {
+            EmbeddedImageOCRAnalyzer.log("Existing fraud heuristic used OCR text: \(reason)")
+        }
+        return makeAnalysis(score: withImageText.score, reasons: reasons)
+    }
+
+    nonisolated private static func evidence(
+        senderAddress: String,
+        text: String,
+        phoneSearchText: String
+    ) -> (score: Int, reasons: [String]) {
         let paymentIndicators = matchedPaymentIndicatorCount(in: text)
         let hasStrongPaymentContext = paymentIndicators >= 3
             || (text.contains("invoice") && paymentIndicators >= 2)
 
-        guard hasStrongPaymentContext else { return .none }
+        guard hasStrongPaymentContext else { return (0, []) }
 
         let senderDomain = domain(from: senderAddress)
         var score = 0
@@ -125,14 +153,21 @@ nonisolated enum InvoiceFraudAnalyzer {
             reasons.append("Financial brand/domain mismatch: \(brand.name)")
         }
 
-        if supportContactPhrases.contains(where: text.contains), containsPhoneNumber(body) {
+        if supportContactPhrases.contains(where: text.contains),
+           containsPhoneNumber(phoneSearchText) {
             score += supportPhoneScore
             reasons.append("Payment message directs recipient to support phone number")
         }
 
-        let finalScore = min(score, 100)
+        return (min(score, 100), reasons)
+    }
+
+    nonisolated private static func makeAnalysis(
+        score: Int,
+        reasons: [String]
+    ) -> InvoiceFraudAnalysis {
         let riskLevel: SenderRiskLevel
-        switch finalScore {
+        switch score {
         case 70...:
             riskLevel = .high
         case 35..<70:
@@ -142,7 +177,7 @@ nonisolated enum InvoiceFraudAnalyzer {
         }
 
         return InvoiceFraudAnalysis(
-            score: finalScore,
+            score: score,
             riskLevel: riskLevel,
             reasons: reasons
         )
