@@ -24,6 +24,8 @@ nonisolated private struct MessageContentFields {
     let body: String
     let authenticationResults: String
     let imageText: String
+    let calendarText: String
+    let hasCalendarPart: Bool
 }
 
 enum MailService {
@@ -125,6 +127,9 @@ enum MailService {
                         || BodyTextAnalyzer.shouldInspectBody(
                             senderDisplayName: message.senderName,
                             subject: message.subject
+                        )
+                        || CalendarInviteFraudAnalyzer.shouldLoadBody(
+                            subject: message.subject
                         ) else {
                     return nil
                 }
@@ -190,7 +195,9 @@ enum MailService {
                 dateReceived: metadata.dateReceived,
                 body: content?.body ?? "",
                 authenticationResults: content?.authenticationResults ?? "",
-                imageText: content?.imageText ?? ""
+                imageText: content?.imageText ?? "",
+                calendarText: content?.calendarText ?? "",
+                hasCalendarPart: content?.hasCalendarPart ?? false
             )
             logAnalysis(for: message)
             return message
@@ -243,10 +250,13 @@ enum MailService {
             if row.atIndex(2)?.booleanValue == true {
                 let rawSource = row.atIndex(5)?.stringValue ?? ""
                 let ocrResult = EmbeddedImageOCRAnalyzer.recognizeText(in: rawSource)
+                let calendarExtraction = CalendarAttachmentExtractor.extract(from: rawSource)
                 fieldsByMessageID[messageID] = MessageContentFields(
                     body: row.atIndex(3)?.stringValue ?? "",
                     authenticationResults: row.atIndex(4)?.stringValue ?? "",
-                    imageText: ocrResult.recognizedText
+                    imageText: ocrResult.recognizedText,
+                    calendarText: calendarExtraction.text,
+                    hasCalendarPart: calendarExtraction.hasCalendarPart
                 )
             } else {
                 fieldsByMessageID.removeValue(forKey: messageID)
@@ -652,6 +662,7 @@ enum MailService {
             + "DKIM=\(message.microsoftImpersonationAnalysis.dkimResult ?? "unknown"); "
             + "DMARC=\(message.microsoftImpersonationAnalysis.dmarcResult ?? "unknown"); "
             + "ImpersonationScore=\(message.microsoftImpersonationAnalysis.score); "
+            + "CalendarFraudScore=\(message.calendarInviteFraudAnalysis.score); "
             + "FinalRisk=\(message.combinedAnalysis.riskLevel.rawValue) "
             + "(\(message.combinedAnalysis.score)); "
             + "AutoDeleteCandidate=\(message.combinedAnalysis.isAutoDeleteCandidate)"

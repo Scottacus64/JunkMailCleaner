@@ -349,20 +349,23 @@ nonisolated enum CombinedMessageAnalyzer {
         bodyTextAnalysis: BodyTextAnalysis,
         microsoftImpersonationAnalysis: MicrosoftImpersonationAnalysis,
         brandImpersonationAnalysis: BrandImpersonationAnalysis = .none,
-        invoiceFraudAnalysis: InvoiceFraudAnalysis = .none
+        invoiceFraudAnalysis: InvoiceFraudAnalysis = .none,
+        calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis = .none
     ) -> CombinedMessageAnalysis {
         let riskLevel: SenderRiskLevel
         if senderAnalysis.riskLevel == .high
             || contentAnalysis.riskLevel == .high
             || bodyTextAnalysis.riskLevel == .high
             || microsoftImpersonationAnalysis.riskLevel == .high
-            || invoiceFraudAnalysis.riskLevel == .high {
+            || invoiceFraudAnalysis.riskLevel == .high
+            || calendarInviteFraudAnalysis.riskLevel == .high {
             riskLevel = .high
         } else if senderAnalysis.riskLevel == .medium
             || contentAnalysis.riskLevel == .medium
             || bodyTextAnalysis.riskLevel == .medium
             || brandImpersonationAnalysis.riskLevel == .medium
-            || invoiceFraudAnalysis.riskLevel == .medium {
+            || invoiceFraudAnalysis.riskLevel == .medium
+            || calendarInviteFraudAnalysis.riskLevel == .medium {
             riskLevel = .medium
         } else {
             riskLevel = .low
@@ -389,6 +392,9 @@ nonisolated enum CombinedMessageAnalyzer {
         if let reason = invoiceFraudAnalysis.reason {
             reasons.append(reason)
         }
+        if let reason = calendarInviteFraudAnalysis.reason {
+            reasons.append(reason)
+        }
         if reasons.isEmpty {
             reasons.append(senderAnalysis.reason)
         }
@@ -400,7 +406,8 @@ nonisolated enum CombinedMessageAnalyzer {
                 bodyTextAnalysis.score,
                 microsoftImpersonationAnalysis.score,
                 brandImpersonationAnalysis.score,
-                invoiceFraudAnalysis.score
+                invoiceFraudAnalysis.score,
+                calendarInviteFraudAnalysis.score
             ),
             riskLevel: riskLevel,
             reason: reasons.joined(separator: "; "),
@@ -408,6 +415,7 @@ nonisolated enum CombinedMessageAnalyzer {
                 || contentAnalysis.isAutoDeleteCandidate
                 || bodyTextAnalysis.isAutoDeleteCandidate
                 || microsoftImpersonationAnalysis.riskLevel == .high
+                || calendarInviteFraudAnalysis.isAutoDeleteCandidate
         )
     }
 }

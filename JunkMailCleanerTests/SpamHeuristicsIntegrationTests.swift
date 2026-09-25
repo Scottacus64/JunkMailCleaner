@@ -98,12 +98,42 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         XCTAssertEqual(library.combinedAnalysis.reason, "No suspicious sender-address patterns")
     }
 
+    func testZohoCalendarBillingReceiptIsHighRiskAutomaticDeleteCandidate() {
+        let calendar = """
+        BEGIN:VCALENDAR
+        METHOD:REQUEST
+        BEGIN:VEVENT
+        SUMMARY:Billing Receipt — Amount $298.99
+        DESCRIPTION:Billing Receipt — Amount $298.99
+        ORGANIZER:mailto:xarlesroteau@zohomail.com
+        END:VEVENT
+        END:VCALENDAR
+        """
+        let message = makeMessage(
+            senderName: "Xarles",
+            senderAddress: "xarlesroteau@zohomail.com",
+            subject: "Invitation: Billing Receipt — Amount $298.99",
+            calendarText: calendar,
+            hasCalendarPart: true
+        )
+
+        XCTAssertEqual(message.calendarInviteFraudAnalysis.score, 100)
+        XCTAssertEqual(message.combinedAnalysis.score, 100)
+        XCTAssertEqual(message.combinedAnalysis.riskLevel, .high)
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
+        XCTAssertTrue(
+            message.combinedAnalysis.reason.contains("Suspicious financial calendar invitation")
+        )
+    }
+
     private func makeMessage(
         senderName: String,
         senderAddress: String,
         subject: String,
         body: String = "",
-        imageText: String = ""
+        imageText: String = "",
+        calendarText: String = "",
+        hasCalendarPart: Bool = false
     ) -> JunkMailMessage {
         JunkMailMessage(
             reference: MailMessageReference(
@@ -120,7 +150,9 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
             dateReceived: Date(timeIntervalSince1970: 0),
             body: body,
             authenticationResults: "",
-            imageText: imageText
+            imageText: imageText,
+            calendarText: calendarText,
+            hasCalendarPart: hasCalendarPart
         )
     }
 }

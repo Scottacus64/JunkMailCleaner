@@ -20,6 +20,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let microsoftImpersonationAnalysis: MicrosoftImpersonationAnalysis
     let brandImpersonationAnalysis: BrandImpersonationAnalysis
     let invoiceFraudAnalysis: InvoiceFraudAnalysis
+    let calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis
     let combinedAnalysis: CombinedMessageAnalysis
 
     init(
@@ -33,7 +34,9 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         dateReceived: Date,
         body: String,
         authenticationResults: String,
-        imageText: String = ""
+        imageText: String = "",
+        calendarText: String = "",
+        hasCalendarPart: Bool = false
     ) {
         self.reference = reference
         self.senderName = senderName
@@ -72,13 +75,21 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             imageText: imageText
         )
         self.invoiceFraudAnalysis = invoiceFraudAnalysis
+        let calendarInviteFraudAnalysis = CalendarInviteFraudAnalyzer.analyze(
+            subject: subject,
+            body: body,
+            calendarText: calendarText,
+            hasCalendarPart: hasCalendarPart
+        )
+        self.calendarInviteFraudAnalysis = calendarInviteFraudAnalysis
         combinedAnalysis = CombinedMessageAnalyzer.combine(
             senderAnalysis: senderAnalysis,
             contentAnalysis: contentAnalysis,
             bodyTextAnalysis: bodyTextAnalysis,
             microsoftImpersonationAnalysis: microsoftImpersonationAnalysis,
             brandImpersonationAnalysis: brandImpersonationAnalysis,
-            invoiceFraudAnalysis: invoiceFraudAnalysis
+            invoiceFraudAnalysis: invoiceFraudAnalysis,
+            calendarInviteFraudAnalysis: calendarInviteFraudAnalysis
         )
     }
 }

@@ -19,7 +19,7 @@ nonisolated struct BrandImpersonationAnalysis: Sendable {
 nonisolated enum BrandImpersonationAnalyzer {
     nonisolated private struct BrandDefinition: Sendable {
         let name: String
-        let displayNameTokens: Set<String>
+        let displayNameAliases: [Set<String>]
         let allowedDomains: Set<String>
     }
 
@@ -30,7 +30,7 @@ nonisolated enum BrandImpersonationAnalyzer {
     nonisolated private static let brands: [BrandDefinition] = [
         BrandDefinition(
             name: "Microsoft",
-            displayNameTokens: ["microsoft", "outlook", "onedrive"],
+            displayNameAliases: [["microsoft"], ["outlook"], ["onedrive"]],
             allowedDomains: [
                 "microsoft.com", "microsoftonline.com", "microsoft365.com",
                 "microsoftstore.com", "office.com", "office365.com",
@@ -39,33 +39,38 @@ nonisolated enum BrandImpersonationAnalyzer {
         ),
         BrandDefinition(
             name: "AARP",
-            displayNameTokens: ["aarp"],
+            displayNameAliases: [["aarp"]],
             allowedDomains: ["aarp.org"]
         ),
         BrandDefinition(
             name: "Walmart",
-            displayNameTokens: ["walmart"],
+            displayNameAliases: [["walmart"]],
             allowedDomains: ["walmart.com"]
         ),
         BrandDefinition(
             name: "CVS",
-            displayNameTokens: ["cvs"],
+            displayNameAliases: [["cvs"]],
             allowedDomains: ["cvs.com"]
         ),
         BrandDefinition(
             name: "PayPal",
-            displayNameTokens: ["paypal"],
+            displayNameAliases: [["paypal"]],
             allowedDomains: ["paypal.com"]
         ),
         BrandDefinition(
             name: "Amazon",
-            displayNameTokens: ["amazon"],
+            displayNameAliases: [["amazon"]],
             allowedDomains: ["amazon.com"]
         ),
         BrandDefinition(
             name: "Apple",
-            displayNameTokens: ["apple"],
+            displayNameAliases: [["apple"]],
             allowedDomains: ["apple.com"]
+        ),
+        BrandDefinition(
+            name: "Geek Squad",
+            displayNameAliases: [["geek", "squad"], ["geeksquad"]],
+            allowedDomains: ["bestbuy.com", "geeksquad.com"]
         )
     ]
 
@@ -115,7 +120,11 @@ nonisolated enum BrandImpersonationAnalyzer {
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
                 .map(String.init)
         )
-        return brands.first { !$0.displayNameTokens.isDisjoint(with: tokens) }
+        return brands.first { brand in
+            brand.displayNameAliases.contains { aliasTokens in
+                aliasTokens.isSubset(of: tokens)
+            }
+        }
     }
 
     nonisolated private static func domain(from address: String) -> String? {

@@ -52,6 +52,18 @@ final class BrandImpersonationAnalyzerTests: XCTestCase {
         )
     }
 
+    func testGeekSquadDisplayNameFromUnrelatedDomainIsDetected() {
+        let analysis = analyze("Geek Squad Support", "billing@randomdomain.com")
+
+        XCTAssertEqual(analysis.score, 60)
+        XCTAssertEqual(analysis.reason, "Brand/domain mismatch: Geek Squad")
+    }
+
+    func testGeekSquadDisplayNameFromApprovedDomainsIsNotDetected() {
+        XCTAssertEqual(analyze("Geek Squad", "service@geeksquad.com").score, 0)
+        XCTAssertEqual(analyze("Geek Squad Support", "notice@mail.bestbuy.com").score, 0)
+    }
+
     private func analyze(
         _ displayName: String,
         _ address: String
