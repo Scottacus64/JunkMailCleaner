@@ -26,6 +26,7 @@ nonisolated private struct MessageContentFields {
     let imageText: String
     let calendarText: String
     let hasCalendarPart: Bool
+    let decodedMessageText: String
 }
 
 nonisolated private struct MailMoveRequest {
@@ -202,7 +203,8 @@ enum MailService {
                 authenticationResults: content?.authenticationResults ?? "",
                 imageText: content?.imageText ?? "",
                 calendarText: content?.calendarText ?? "",
-                hasCalendarPart: content?.hasCalendarPart ?? false
+                hasCalendarPart: content?.hasCalendarPart ?? false,
+                decodedMessageText: content?.decodedMessageText ?? ""
             )
             logAnalysis(for: message)
             return message
@@ -256,12 +258,14 @@ enum MailService {
                 let rawSource = row.atIndex(5)?.stringValue ?? ""
                 let ocrResult = EmbeddedImageOCRAnalyzer.recognizeText(in: rawSource)
                 let calendarExtraction = CalendarAttachmentExtractor.extract(from: rawSource)
+                let decodedMessageText = DecodedMessageTextExtractor.extract(from: rawSource)
                 fieldsByMessageID[messageID] = MessageContentFields(
                     body: row.atIndex(3)?.stringValue ?? "",
                     authenticationResults: row.atIndex(4)?.stringValue ?? "",
                     imageText: ocrResult.recognizedText,
                     calendarText: calendarExtraction.text,
-                    hasCalendarPart: calendarExtraction.hasCalendarPart
+                    hasCalendarPart: calendarExtraction.hasCalendarPart,
+                    decodedMessageText: decodedMessageText.combinedText
                 )
             } else {
                 fieldsByMessageID.removeValue(forKey: messageID)
@@ -675,6 +679,15 @@ enum MailService {
             + "(\(message.combinedAnalysis.score)); "
             + "AutoDeleteCandidate=\(message.combinedAnalysis.isAutoDeleteCandidate)"
         )
+        if message.brandImpersonationAnalysis.claimedBrand == "DocuSign" {
+            print(
+                "[JunkMailCleaner] Brand=DocuSign; "
+                    + "FromDomain=\(message.brandImpersonationAnalysis.senderDomain ?? "none"); "
+                    + "TrustedBrandDomain="
+                    + "\(message.brandImpersonationAnalysis.isTrustedBrandDomain == true); "
+                    + "BrandImpersonationScore=\(message.brandImpersonationAnalysis.score)"
+            )
+        }
     }
 
 }

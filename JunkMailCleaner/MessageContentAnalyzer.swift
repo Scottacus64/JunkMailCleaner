@@ -357,6 +357,7 @@ nonisolated enum CombinedMessageAnalyzer {
             || contentAnalysis.riskLevel == .high
             || bodyTextAnalysis.riskLevel == .high
             || microsoftImpersonationAnalysis.riskLevel == .high
+            || brandImpersonationAnalysis.riskLevel == .high
             || invoiceFraudAnalysis.riskLevel == .high
             || calendarInviteFraudAnalysis.riskLevel == .high {
             riskLevel = .high
@@ -415,6 +416,7 @@ nonisolated enum CombinedMessageAnalyzer {
                 || contentAnalysis.isAutoDeleteCandidate
                 || bodyTextAnalysis.isAutoDeleteCandidate
                 || microsoftImpersonationAnalysis.riskLevel == .high
+                || brandImpersonationAnalysis.isAutoDeleteCandidate
                 || calendarInviteFraudAnalysis.isAutoDeleteCandidate
         )
     }

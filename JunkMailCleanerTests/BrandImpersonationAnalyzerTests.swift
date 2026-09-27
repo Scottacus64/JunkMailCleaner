@@ -64,13 +64,112 @@ final class BrandImpersonationAnalyzerTests: XCTestCase {
         XCTAssertEqual(analyze("Geek Squad Support", "notice@mail.bestbuy.com").score, 0)
     }
 
+    func testDocuSignDisplayNameFromUntrustedDomainIsStrongImpersonation() {
+        let analysis = analyze(
+            "DocuSign",
+            "noreply.vpxyuo-united@wrightonecomm.com",
+            subject: "Please review and Esignature DocuSign"
+        )
+
+        XCTAssertEqual(analysis.score, 80)
+        XCTAssertEqual(analysis.riskLevel, .high)
+        XCTAssertEqual(
+            analysis.reason,
+            "DocuSign impersonation: sender domain is not trusted"
+        )
+        XCTAssertEqual(analysis.claimedBrand, "DocuSign")
+        XCTAssertEqual(analysis.senderDomain, "wrightonecomm.com")
+        XCTAssertEqual(analysis.isTrustedBrandDomain, false)
+        XCTAssertTrue(analysis.isAutoDeleteCandidate)
+    }
+
+    func testDocuSignNotificationSubjectFromUntrustedDomainIsDetected() {
+        let analysis = analyze(
+            "Member Service",
+            "member_sercicemadison@olloum.com",
+            subject: "DocuSign signature requested — please review the document"
+        )
+
+        XCTAssertEqual(analysis.score, 80)
+        XCTAssertTrue(analysis.isAutoDeleteCandidate)
+    }
+
+    func testDocuSignNotificationBodyFromUntrustedDomainIsDetected() {
+        let analysis = analyze(
+            "Document Center",
+            "notice@unrelated.example",
+            body: "Docu Sign has sent you a document. Please review and sign."
+        )
+
+        XCTAssertEqual(analysis.score, 80)
+        XCTAssertEqual(analysis.claimedBrand, "DocuSign")
+    }
+
+    func testLegitimateDocuSignNotificationDomainsAreTrusted() {
+        for address in [
+            "dse@docusign.net",
+            "info@account.docusign.net",
+            "notice@mail.docusign.com"
+        ] {
+            let analysis = analyze(
+                "DocuSign",
+                address,
+                subject: "Please review and sign your document"
+            )
+            XCTAssertEqual(analysis.score, 0, address)
+            XCTAssertEqual(analysis.isTrustedBrandDomain, true, address)
+            XCTAssertFalse(analysis.isAutoDeleteCandidate, address)
+        }
+    }
+
+    func testDocuSignLookalikeDomainIsNotTrusted() {
+        let analysis = analyze(
+            "DocuSign",
+            "notice@docusign.com.example.net"
+        )
+
+        XCTAssertEqual(analysis.score, 80)
+        XCTAssertEqual(analysis.isTrustedBrandDomain, false)
+    }
+
+    func testConversationalDocuSignMentionDoesNotClaimIdentity() {
+        let analysis = analyze(
+            "Vendor Newsletter",
+            "news@vendor.example",
+            subject: "Tools our team uses",
+            body: "Our legal department sometimes uses DocuSign for contracts."
+        )
+
+        XCTAssertEqual(analysis.score, 0)
+        XCTAssertNil(analysis.claimedBrand)
+    }
+
+    func testDocuSignURLDoesNotMakeUntrustedSenderLegitimate() {
+        let analysis = analyze(
+            "Document Center",
+            "notice@untrusted.example",
+            subject: "DocuSign signature requested",
+            body: "Please review the document at https://www.docusign.com/example"
+        )
+
+        XCTAssertEqual(analysis.score, 80)
+        XCTAssertEqual(analysis.senderDomain, "untrusted.example")
+        XCTAssertEqual(analysis.isTrustedBrandDomain, false)
+    }
+
     private func analyze(
         _ displayName: String,
-        _ address: String
+        _ address: String,
+        subject: String = "",
+        body: String = "",
+        decodedMessageText: String = ""
     ) -> BrandImpersonationAnalysis {
         BrandImpersonationAnalyzer.analyze(
             senderDisplayName: displayName,
-            senderAddress: address
+            senderAddress: address,
+            subject: subject,
+            body: body,
+            decodedMessageText: decodedMessageText
         )
     }
 }

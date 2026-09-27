@@ -126,6 +126,23 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         )
     }
 
+    func testDocuSignImpersonationIsAutomaticDeleteCandidate() {
+        let message = makeMessage(
+            senderName: "Member Service",
+            senderAddress: "member_sercicemadison@olloum.com",
+            subject: "DocuSign signature requested — please review the document"
+        )
+
+        XCTAssertEqual(message.brandImpersonationAnalysis.score, 80)
+        XCTAssertEqual(message.combinedAnalysis.score, 80)
+        XCTAssertEqual(message.combinedAnalysis.riskLevel, .high)
+        XCTAssertEqual(
+            message.combinedAnalysis.reason,
+            "DocuSign impersonation: sender domain is not trusted"
+        )
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
+    }
+
     private func makeMessage(
         senderName: String,
         senderAddress: String,
