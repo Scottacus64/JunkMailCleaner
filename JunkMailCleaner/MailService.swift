@@ -28,6 +28,11 @@ nonisolated private struct MessageContentFields {
     let hasCalendarPart: Bool
 }
 
+nonisolated private struct MailMoveRequest {
+    let token: String
+    let reference: MailMessageReference
+}
+
 enum MailService {
     nonisolated static func fetchJunkMessages() async throws -> [JunkMailMessage] {
         try await Task.detached(priority: .userInitiated) {
@@ -280,47 +285,28 @@ enum MailService {
         }
 
         var failures = references
-            .filter { $0.messageID.isEmpty }
+            .filter { $0.messageID.isEmpty && $0.libraryIdentifier.isEmpty }
             .map {
                 MailMoveFailure(
                     reference: $0,
-                    message: "This message has no Message-ID and cannot be matched safely."
+                    message: "This message has no usable Mail identifier."
                 )
             }
-
-        let referencesByMessageID = Dictionary(
-            grouping: references.filter { !$0.messageID.isEmpty },
-            by: \.messageID
-        )
-        let duplicateMessageIDs = Set(
-            referencesByMessageID.compactMap { messageID, matchingReferences in
-                matchingReferences.count > 1 ? messageID : nil
+        let requests = references
+            .filter { !$0.messageID.isEmpty || !$0.libraryIdentifier.isEmpty }
+            .enumerated()
+            .map { index, reference in
+                MailMoveRequest(token: String(index), reference: reference)
             }
-        )
+        let requestsByToken = Dictionary(uniqueKeysWithValues: requests.map { ($0.token, $0) })
 
-        for messageID in duplicateMessageIDs {
-            for reference in referencesByMessageID[messageID] ?? [] {
-                failures.append(
-                    MailMoveFailure(
-                        reference: reference,
-                        message: "Message-ID is not unique in the scanned Junk mailbox."
-                    )
-                )
-            }
-        }
-
-        let uniqueReferencesByMessageID = referencesByMessageID.compactMapValues { matchingReferences in
-            matchingReferences.count == 1 ? matchingReferences[0] : nil
-        }
-        let messageIDs = uniqueReferencesByMessageID.keys.sorted()
-
-        guard !messageIDs.isEmpty else {
+        guard !requests.isEmpty else {
             return MailMoveResult(movedReferences: [], failures: failures)
         }
 
         let scriptSource = moveScript(
             accountIdentifier: firstReference.accountIdentifier,
-            messageIDs: messageIDs
+            requests: requests
         )
 
         guard let script = NSAppleScript(source: scriptSource) else {
@@ -342,17 +328,17 @@ enum MailService {
             for index in 1...result.numberOfItems {
                 guard let row = result.atIndex(index),
                       row.numberOfItems == 3,
-                      let messageID = row.atIndex(1)?.stringValue,
-                      let reference = uniqueReferencesByMessageID[messageID] else {
+                      let token = row.atIndex(1)?.stringValue,
+                      let request = requestsByToken[token] else {
                     continue
                 }
 
                 if row.atIndex(2)?.booleanValue == true {
-                    movedReferences.insert(reference)
+                    movedReferences.insert(request.reference)
                 } else {
                     failures.append(
                         MailMoveFailure(
-                            reference: reference,
+                            reference: request.reference,
                             message: row.atIndex(3)?.stringValue ?? "Unknown Apple Mail error"
                         )
                     )
@@ -361,10 +347,10 @@ enum MailService {
         }
 
         let reportedReferences = movedReferences.union(failures.map(\.reference))
-        for reference in uniqueReferencesByMessageID.values where !reportedReferences.contains(reference) {
+        for request in requests where !reportedReferences.contains(request.reference) {
             failures.append(
                 MailMoveFailure(
-                    reference: reference,
+                    reference: request.reference,
                     message: "Apple Mail did not return a result for this message."
                 )
             )
@@ -557,15 +543,19 @@ enum MailService {
 
     nonisolated private static func moveScript(
         accountIdentifier: String,
-        messageIDs: [String]
+        requests: [MailMoveRequest]
     ) -> String {
-        let identifierList = messageIDs.map(appleScriptString).joined(separator: ", ")
+        let requestList = requests.map { request in
+            "{\(appleScriptString(request.token)), "
+                + "\(appleScriptString(request.reference.messageID)), "
+                + "\(appleScriptString(request.reference.libraryIdentifier))}"
+        }.joined(separator: ", ")
 
         return #"""
         using terms from application "Mail"
             tell application id "com.apple.mail"
                 set scannedAccountID to \#(appleScriptString(accountIdentifier))
-                set requestedMessageIDs to {\#(identifierList)}
+                set moveRequests to {\#(requestList)}
                 set hotmailAccount to missing value
 
                 repeat with candidateAccount in accounts
@@ -604,11 +594,29 @@ enum MailService {
                 set hotmailJunkMailbox to mailbox junkMailboxName of hotmailAccount
                 set accountTrashMailbox to mailbox trashMailboxName of hotmailAccount
                 set resultRows to {}
-                repeat with requestedMessageID in requestedMessageIDs
-                    set requestedIDText to requestedMessageID as text
+                repeat with moveRequest in moveRequests
+                    set requestToken to (item 1 of moveRequest) as text
+                    set requestedMessageID to (item 2 of moveRequest) as text
+                    set requestedLibraryID to (item 3 of moveRequest) as text
                     try
-                        set matchingMessages to every message of hotmailJunkMailbox whose message id is requestedIDText
+                        set matchingMessages to {}
+                        if requestedMessageID is not "" then
+                            try
+                                set matchingMessages to every message of hotmailJunkMailbox whose message id is requestedMessageID
+                            end try
+                        end if
                         set matchingCount to count of matchingMessages
+
+                        -- Malformed junk often omits or duplicates the internet Message-ID.
+                        -- Fall back to Apple Mail's mailbox-local identifier captured during scanning.
+                        if matchingCount is not 1 and requestedLibraryID is not "" then
+                            set matchingMessages to {}
+                            try
+                                set requestedLibraryIDNumber to requestedLibraryID as integer
+                                set matchingMessages to every message of hotmailJunkMailbox whose id is requestedLibraryIDNumber
+                            end try
+                            set matchingCount to count of matchingMessages
+                        end if
 
                         if matchingCount is 0 then
                             error "Message is no longer in the Junk mailbox." number 1005
@@ -620,9 +628,9 @@ enum MailService {
 
                         set matchedMessage to item 1 of matchingMessages
                         move matchedMessage to accountTrashMailbox
-                        set end of resultRows to {requestedIDText, true, ""}
+                        set end of resultRows to {requestToken, true, ""}
                     on error errorMessage number errorNumber
-                        set end of resultRows to {requestedIDText, false, errorMessage & " (" & errorNumber & ")"}
+                        set end of resultRows to {requestToken, false, errorMessage & " (" & errorNumber & ")"}
                     end try
                 end repeat
 

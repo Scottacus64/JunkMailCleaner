@@ -258,10 +258,12 @@ struct ContentView: View {
             let messagesByReference = Dictionary(
                 uniqueKeysWithValues: selectedMessages.map { ($0.reference, $0) }
             )
+            var failureDescriptions: [String] = []
             for failure in result.failures {
                 let message = messagesByReference[failure.reference]
                 let sender = message?.senderAddress ?? "Unknown sender"
                 let subject = message?.subject.isEmpty == false ? message?.subject ?? "" : "(No Subject)"
+                failureDescriptions.append("\(sender) — \(subject): \(failure.message)")
                 print(
                     "[JunkMailCleaner] Move failed for \(sender) — \(subject) "
                     + "[Message-ID: \(failure.reference.messageID)]: \(failure.message)"
@@ -269,7 +271,8 @@ struct ContentView: View {
             }
 
             parts.append(
-                "\(result.failures.count) failed. See the Xcode console for details."
+                "\(result.failures.count) failed:\n"
+                    + failureDescriptions.joined(separator: "\n")
             )
         }
 
