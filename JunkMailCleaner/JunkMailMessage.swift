@@ -21,6 +21,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let brandImpersonationAnalysis: BrandImpersonationAnalysis
     let invoiceFraudAnalysis: InvoiceFraudAnalysis
     let calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis
+    let commercialMessageAnalysis: CommercialMessageAnalysis
     let combinedAnalysis: CombinedMessageAnalysis
 
     init(
@@ -86,6 +87,10 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             hasCalendarPart: hasCalendarPart
         )
         self.calendarInviteFraudAnalysis = calendarInviteFraudAnalysis
+        let commercialMessageAnalysis = CommercialMessageAnalyzer.analyze(
+            decodedBodyText: decodedMessageText
+        )
+        self.commercialMessageAnalysis = commercialMessageAnalysis
         combinedAnalysis = CombinedMessageAnalyzer.combine(
             senderAnalysis: senderAnalysis,
             contentAnalysis: contentAnalysis,
@@ -93,7 +98,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             microsoftImpersonationAnalysis: microsoftImpersonationAnalysis,
             brandImpersonationAnalysis: brandImpersonationAnalysis,
             invoiceFraudAnalysis: invoiceFraudAnalysis,
-            calendarInviteFraudAnalysis: calendarInviteFraudAnalysis
+            calendarInviteFraudAnalysis: calendarInviteFraudAnalysis,
+            commercialMessageAnalysis: commercialMessageAnalysis
         )
     }
 }

@@ -675,6 +675,7 @@ enum MailService {
             + "DMARC=\(message.microsoftImpersonationAnalysis.dmarcResult ?? "unknown"); "
             + "ImpersonationScore=\(message.microsoftImpersonationAnalysis.score); "
             + "CalendarFraudScore=\(message.calendarInviteFraudAnalysis.score); "
+            + "CommercialMessageScore=\(message.commercialMessageAnalysis.score); "
             + "FinalRisk=\(message.combinedAnalysis.riskLevel.rawValue) "
             + "(\(message.combinedAnalysis.score)); "
             + "AutoDeleteCandidate=\(message.combinedAnalysis.isAutoDeleteCandidate)"
@@ -686,6 +687,13 @@ enum MailService {
                     + "TrustedBrandDomain="
                     + "\(message.brandImpersonationAnalysis.isTrustedBrandDomain == true); "
                     + "BrandImpersonationScore=\(message.brandImpersonationAnalysis.score)"
+            )
+        }
+        for indicator in message.commercialMessageAnalysis.indicators {
+            print(
+                "[JunkMailCleaner] CommercialIndicator=\(indicator.reason); "
+                    + "IndicatorScore=\(indicator.score); "
+                    + "Matches=\(indicator.matches.joined(separator: ", "))"
             )
         }
     }

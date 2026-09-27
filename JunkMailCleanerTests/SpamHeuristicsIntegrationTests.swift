@@ -143,6 +143,60 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
     }
 
+    func testExplicitAdvertisingMessageIsSelectedForNuke() {
+        let message = makeMessage(
+            senderName: "Direct Meds Support",
+            senderAddress: "health@eliteupgrade.store",
+            subject: "A Faster, Simpler Approach",
+            decodedMessageText: """
+            Try It Today
+            If you wish to unsubscribe from future mailings...
+            This is an advertisement.
+            promotional offers
+            """
+        )
+
+        XCTAssertEqual(message.commercialMessageAnalysis.score, 95)
+        XCTAssertEqual(message.combinedAnalysis.riskLevel, .high)
+        XCTAssertTrue(message.combinedAnalysis.isNukeCandidate)
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
+        XCTAssertTrue(
+            message.combinedAnalysis.reason.contains("Explicit advertising disclosure")
+        )
+        XCTAssertTrue(
+            message.combinedAnalysis.reason.contains("Bulk-mail unsubscribe/opt-out language")
+        )
+        XCTAssertTrue(
+            message.combinedAnalysis.reason.contains("Commercial call-to-action")
+        )
+    }
+
+    func testUnsubscribeOnlyMessageIsNotSelectedForNuke() {
+        let message = makeMessage(
+            senderName: "Community Newsletter",
+            senderAddress: "newsletter@example.com",
+            subject: "September community news",
+            decodedMessageText: "Read this month's events. Unsubscribe if you no longer want updates."
+        )
+
+        XCTAssertEqual(message.commercialMessageAnalysis.score, 15)
+        XCTAssertEqual(message.combinedAnalysis.score, 15)
+        XCTAssertFalse(message.combinedAnalysis.isNukeCandidate)
+        XCTAssertFalse(message.combinedAnalysis.isAutoDeleteCandidate)
+    }
+
+    func testExistingNonCommercialRiskRemainsSelectedForNuke() {
+        let message = makeMessage(
+            senderName: "TrimRX",
+            senderAddress: "health@dailyupgrade.space",
+            subject: "Monthly information",
+            decodedMessageText: "Unsubscribe"
+        )
+
+        XCTAssertEqual(message.senderAnalysis.score, 25)
+        XCTAssertTrue(message.combinedAnalysis.isNukeCandidate)
+    }
+
     private func makeMessage(
         senderName: String,
         senderAddress: String,
@@ -150,7 +204,8 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         body: String = "",
         imageText: String = "",
         calendarText: String = "",
-        hasCalendarPart: Bool = false
+        hasCalendarPart: Bool = false,
+        decodedMessageText: String = ""
     ) -> JunkMailMessage {
         JunkMailMessage(
             reference: MailMessageReference(
@@ -169,7 +224,8 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
             authenticationResults: "",
             imageText: imageText,
             calendarText: calendarText,
-            hasCalendarPart: hasCalendarPart
+            hasCalendarPart: hasCalendarPart,
+            decodedMessageText: decodedMessageText
         )
     }
 }

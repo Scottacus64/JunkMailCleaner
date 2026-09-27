@@ -126,13 +126,13 @@ struct ContentView: View {
         Table(messages) {
                 TableColumn("") { message in
                     Toggle(
-                        "Included when using Nuke because risk is greater than zero",
-                        isOn: .constant(message.combinedAnalysis.score > 0)
+                        "Included when using Nuke based on deletion evidence",
+                        isOn: .constant(message.combinedAnalysis.isNukeCandidate)
                     )
                     .labelsHidden()
                     .allowsHitTesting(false)
                     .help(
-                        message.combinedAnalysis.score > 0
+                        message.combinedAnalysis.isNukeCandidate
                             ? "Included when using Nuke"
                             : "Not included when using Nuke"
                     )
@@ -196,7 +196,7 @@ struct ContentView: View {
     }
 
     private var positiveRiskMessages: [JunkMailMessage] {
-        messages.filter { $0.combinedAnalysis.score > 0 }
+        messages.filter { $0.combinedAnalysis.isNukeCandidate }
     }
 
     private func scanJunkMail() {

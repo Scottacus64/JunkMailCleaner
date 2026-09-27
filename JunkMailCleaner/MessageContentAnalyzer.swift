@@ -40,6 +40,7 @@ nonisolated struct CombinedMessageAnalysis: Sendable {
     let riskLevel: SenderRiskLevel
     let reason: String
     let isAutoDeleteCandidate: Bool
+    let isNukeCandidate: Bool
 }
 
 nonisolated enum MessageContentAnalyzer {
@@ -350,8 +351,18 @@ nonisolated enum CombinedMessageAnalyzer {
         microsoftImpersonationAnalysis: MicrosoftImpersonationAnalysis,
         brandImpersonationAnalysis: BrandImpersonationAnalysis = .none,
         invoiceFraudAnalysis: InvoiceFraudAnalysis = .none,
-        calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis = .none
+        calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis = .none,
+        commercialMessageAnalysis: CommercialMessageAnalysis = .none
     ) -> CombinedMessageAnalysis {
+        let existingEvidenceScore = max(
+            senderAnalysis.score,
+            contentAnalysis.score,
+            bodyTextAnalysis.score,
+            microsoftImpersonationAnalysis.score,
+            brandImpersonationAnalysis.score,
+            invoiceFraudAnalysis.score,
+            calendarInviteFraudAnalysis.score
+        )
         let riskLevel: SenderRiskLevel
         if senderAnalysis.riskLevel == .high
             || contentAnalysis.riskLevel == .high
@@ -359,14 +370,16 @@ nonisolated enum CombinedMessageAnalyzer {
             || microsoftImpersonationAnalysis.riskLevel == .high
             || brandImpersonationAnalysis.riskLevel == .high
             || invoiceFraudAnalysis.riskLevel == .high
-            || calendarInviteFraudAnalysis.riskLevel == .high {
+            || calendarInviteFraudAnalysis.riskLevel == .high
+            || commercialMessageAnalysis.riskLevel == .high {
             riskLevel = .high
         } else if senderAnalysis.riskLevel == .medium
             || contentAnalysis.riskLevel == .medium
             || bodyTextAnalysis.riskLevel == .medium
             || brandImpersonationAnalysis.riskLevel == .medium
             || invoiceFraudAnalysis.riskLevel == .medium
-            || calendarInviteFraudAnalysis.riskLevel == .medium {
+            || calendarInviteFraudAnalysis.riskLevel == .medium
+            || commercialMessageAnalysis.riskLevel == .medium {
             riskLevel = .medium
         } else {
             riskLevel = .low
@@ -396,20 +409,15 @@ nonisolated enum CombinedMessageAnalyzer {
         if let reason = calendarInviteFraudAnalysis.reason {
             reasons.append(reason)
         }
+        if let reason = commercialMessageAnalysis.reason {
+            reasons.append(reason)
+        }
         if reasons.isEmpty {
             reasons.append(senderAnalysis.reason)
         }
 
         return CombinedMessageAnalysis(
-            score: max(
-                senderAnalysis.score,
-                contentAnalysis.score,
-                bodyTextAnalysis.score,
-                microsoftImpersonationAnalysis.score,
-                brandImpersonationAnalysis.score,
-                invoiceFraudAnalysis.score,
-                calendarInviteFraudAnalysis.score
-            ),
+            score: max(existingEvidenceScore, commercialMessageAnalysis.score),
             riskLevel: riskLevel,
             reason: reasons.joined(separator: "; "),
             isAutoDeleteCandidate: senderAnalysis.isHighRiskForAutomaticDeletion
@@ -418,6 +426,9 @@ nonisolated enum CombinedMessageAnalyzer {
                 || microsoftImpersonationAnalysis.riskLevel == .high
                 || brandImpersonationAnalysis.isAutoDeleteCandidate
                 || calendarInviteFraudAnalysis.isAutoDeleteCandidate
+                || commercialMessageAnalysis.isAutoDeleteCandidate,
+            isNukeCandidate: existingEvidenceScore > 0
+                || commercialMessageAnalysis.hasExplicitAdvertisingDisclosure
         )
     }
 }
