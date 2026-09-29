@@ -352,8 +352,19 @@ nonisolated enum CombinedMessageAnalyzer {
         brandImpersonationAnalysis: BrandImpersonationAnalysis = .none,
         invoiceFraudAnalysis: InvoiceFraudAnalysis = .none,
         calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis = .none,
-        commercialMessageAnalysis: CommercialMessageAnalysis = .none
+        commercialMessageAnalysis: CommercialMessageAnalysis = .none,
+        senderListStatus: SenderListStatus = .neither
     ) -> CombinedMessageAnalysis {
+        if senderListStatus == .blacklisted {
+            return CombinedMessageAnalysis(
+                score: 100,
+                riskLevel: .high,
+                reason: "Blacklisted sender",
+                isAutoDeleteCandidate: true,
+                isNukeCandidate: true
+            )
+        }
+
         let existingEvidenceScore = max(
             senderAnalysis.score,
             contentAnalysis.score,

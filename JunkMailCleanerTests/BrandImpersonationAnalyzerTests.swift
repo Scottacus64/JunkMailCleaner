@@ -24,11 +24,12 @@ final class BrandImpersonationAnalyzerTests: XCTestCase {
         XCTAssertNil(analysis.reason)
     }
 
-    func testMicrosoftDisplayNameFromUnrelatedDomainIsDetected() {
+    func testMicrosoftDisplayNameIsDeferredToTargetedAnalyzer() {
         let analysis = analyze("Microsoft Account Team", "sender@randomdomain.com")
 
-        XCTAssertEqual(analysis.score, 60)
-        XCTAssertEqual(analysis.reason, "Brand/domain mismatch: Microsoft")
+        XCTAssertEqual(analysis.score, 0)
+        XCTAssertNil(analysis.reason)
+        XCTAssertNil(analysis.claimedBrand)
     }
 
     func testBrandNameInSubjectIsIrrelevantToDisplayNameAnalysis() {
@@ -155,6 +156,122 @@ final class BrandImpersonationAnalyzerTests: XCTestCase {
         XCTAssertEqual(analysis.score, 80)
         XCTAssertEqual(analysis.senderDomain, "untrusted.example")
         XCTAssertEqual(analysis.isTrustedBrandDomain, false)
+    }
+
+    func testAlibabaTradeCenterOrderFromUnrelatedDomainIsStrongImpersonation() {
+        let analysis = analyze(
+            "Sales",
+            "sales086@sabeng.it",
+            subject: "RE: RE: Invoice & Signed Contract -NEW ORDER-088408",
+            decodedMessageText: """
+            Alibaba.com
+            Alibaba.com Trade Center
+            New order inquiry from a buyer
+            View Inquiry
+            View Buyer Information
+            """
+        )
+
+        XCTAssertEqual(analysis.score, 100)
+        XCTAssertEqual(analysis.riskLevel, .high)
+        XCTAssertEqual(analysis.reason, "Alibaba brand impersonation")
+        XCTAssertEqual(analysis.claimedBrand, "Alibaba")
+        XCTAssertEqual(analysis.senderDomain, "sabeng.it")
+        XCTAssertEqual(analysis.isTrustedBrandDomain, false)
+        XCTAssertTrue(analysis.isAutoDeleteCandidate)
+    }
+
+    func testOfficialAlibabaDomainAndSubdomainAreTrusted() {
+        for address in ["notice@alibaba.com", "orders@mail.alibaba.com"] {
+            let analysis = analyze(
+                "Sales",
+                address,
+                subject: "New order inquiry",
+                decodedMessageText: "Alibaba.com Trade Center — view buyer information"
+            )
+            XCTAssertEqual(analysis.score, 0, address)
+            XCTAssertEqual(analysis.isTrustedBrandDomain, true, address)
+        }
+    }
+
+    func testPayPalAccountPaymentClaimFromUnrelatedDomainIsStrongImpersonation() {
+        let analysis = analyze(
+            "Account Service",
+            "notice@unrelated.example",
+            subject: "PayPal account payment notification",
+            body: "A payment was charged to your account. Sign in to verify the transaction."
+        )
+
+        XCTAssertEqual(analysis.score, 90)
+        XCTAssertEqual(analysis.reason, "PayPal brand impersonation")
+        XCTAssertTrue(analysis.isAutoDeleteCandidate)
+    }
+
+    func testPayPalAccountPaymentClaimFromOfficialSubdomainIsTrusted() {
+        let analysis = analyze(
+            "Account Service",
+            "notice@mail.paypal.com",
+            subject: "PayPal account payment notification",
+            body: "A payment was charged to your account. Sign in to verify the transaction."
+        )
+
+        XCTAssertEqual(analysis.score, 0)
+        XCTAssertEqual(analysis.isTrustedBrandDomain, true)
+        XCTAssertFalse(analysis.isAutoDeleteCandidate)
+    }
+
+    func testMicrosoftClaimUsesSharedBrandFramework() {
+        let analysis = analyze(
+            "Microsoft Account",
+            "notice@unrelated.example",
+            subject: "Security alert — unusual sign in"
+        )
+
+        XCTAssertEqual(analysis.score, 95)
+        XCTAssertEqual(analysis.claimedBrand, "Microsoft")
+        XCTAssertTrue(analysis.isAutoDeleteCandidate)
+    }
+
+    func testThirdPartyBrandReferencesAreNotImpersonation() {
+        let examples = [
+            (
+                "Industry News",
+                "news@publisher.example",
+                "News article about Alibaba sellers and buyer inquiries"
+            ),
+            (
+                "Retail Newsletter",
+                "news@retailer.example",
+                "Our newsletter discusses Microsoft account security attacks."
+            ),
+            (
+                "Store Receipt",
+                "receipt@store.example",
+                "Your receipt shows payment method: PayPal. You paid with PayPal."
+            )
+        ]
+
+        for (displayName, address, text) in examples {
+            let analysis = analyze(
+                displayName,
+                address,
+                subject: text,
+                body: text
+            )
+            XCTAssertEqual(analysis.score, 0, text)
+            XCTAssertNil(analysis.claimedBrand, text)
+        }
+    }
+
+    func testRepeatedReplyPrefixWithoutBrandClaimDoesNotScore() {
+        let analysis = analyze(
+            "Sales",
+            "sales@example.com",
+            subject: "RE: RE: Invoice and signed contract for new order"
+        )
+
+        XCTAssertEqual(analysis.score, 0)
+        XCTAssertNil(analysis.reason)
     }
 
     private func analyze(

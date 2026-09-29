@@ -22,7 +22,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let invoiceFraudAnalysis: InvoiceFraudAnalysis
     let calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis
     let commercialMessageAnalysis: CommercialMessageAnalysis
-    let combinedAnalysis: CombinedMessageAnalysis
+    private(set) var senderListStatus: SenderListStatus
+    private(set) var combinedAnalysis: CombinedMessageAnalysis
 
     init(
         reference: MailMessageReference,
@@ -38,7 +39,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         imageText: String = "",
         calendarText: String = "",
         hasCalendarPart: Bool = false,
-        decodedMessageText: String = ""
+        decodedMessageText: String = "",
+        senderListStatus: SenderListStatus = .neither
     ) {
         self.reference = reference
         self.senderName = senderName
@@ -46,6 +48,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         self.subject = subject
         self.dateReceived = dateReceived
         self.senderAnalysis = senderAnalysis
+        self.senderListStatus = senderListStatus
         let contentAnalysis = analyzeContent
             ? MessageContentAnalyzer.analyze(
                 senderDisplayName: senderName,
@@ -62,7 +65,9 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             senderDisplayName: senderName,
             senderAddress: senderAddress,
             subject: subject,
-            authenticationResults: authenticationResults
+            authenticationResults: authenticationResults,
+            decodedMessageText: decodedMessageText,
+            imageText: imageText
         )
         self.microsoftImpersonationAnalysis = microsoftImpersonationAnalysis
         let brandImpersonationAnalysis = BrandImpersonationAnalyzer.analyze(
@@ -70,7 +75,8 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             senderAddress: senderAddress,
             subject: subject,
             body: body,
-            decodedMessageText: decodedMessageText
+            decodedMessageText: decodedMessageText,
+            imageText: imageText
         )
         self.brandImpersonationAnalysis = brandImpersonationAnalysis
         let invoiceFraudAnalysis = InvoiceFraudAnalyzer.analyze(
@@ -99,7 +105,23 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
             brandImpersonationAnalysis: brandImpersonationAnalysis,
             invoiceFraudAnalysis: invoiceFraudAnalysis,
             calendarInviteFraudAnalysis: calendarInviteFraudAnalysis,
-            commercialMessageAnalysis: commercialMessageAnalysis
+            commercialMessageAnalysis: commercialMessageAnalysis,
+            senderListStatus: senderListStatus
+        )
+    }
+
+    mutating func updateSenderListStatus(_ status: SenderListStatus) {
+        senderListStatus = status
+        combinedAnalysis = CombinedMessageAnalyzer.combine(
+            senderAnalysis: senderAnalysis,
+            contentAnalysis: contentAnalysis,
+            bodyTextAnalysis: bodyTextAnalysis,
+            microsoftImpersonationAnalysis: microsoftImpersonationAnalysis,
+            brandImpersonationAnalysis: brandImpersonationAnalysis,
+            invoiceFraudAnalysis: invoiceFraudAnalysis,
+            calendarInviteFraudAnalysis: calendarInviteFraudAnalysis,
+            commercialMessageAnalysis: commercialMessageAnalysis,
+            senderListStatus: status
         )
     }
 }

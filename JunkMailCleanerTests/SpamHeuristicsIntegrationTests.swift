@@ -3,7 +3,7 @@ import XCTest
 @testable import JunkMailCleaner
 
 final class SpamHeuristicsIntegrationTests: XCTestCase {
-    func testImageOnlyPayPalInvoiceScamScoresOneHundredWithoutAutoDelete() {
+    func testImageOnlyPayPalInvoiceScamScoresOneHundredAndAutoDeletes() {
         let message = makeMessage(
             senderName: "Jacob Bernice",
             senderAddress: "jacob2bernice080@icloud.com",
@@ -19,14 +19,15 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         XCTAssertEqual(message.combinedAnalysis.score, 100)
         XCTAssertEqual(
             message.combinedAnalysis.reason,
-            "Invoice/payment message from free-mail account (image text); "
+            "PayPal brand impersonation; "
+                + "Invoice/payment message from free-mail account (image text); "
                 + "Financial brand/domain mismatch: PayPal (image text); "
                 + "Payment message directs recipient to support phone number (image text)"
         )
-        XCTAssertFalse(message.combinedAnalysis.isAutoDeleteCandidate)
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
     }
 
-    func testPayPalInvoiceScamFromFreeMailScoresOneHundredWithoutAutoDelete() {
+    func testPayPalInvoiceScamFromFreeMailScoresOneHundredAndAutoDeletes() {
         let message = makeMessage(
             senderName: "Jacob Bernice",
             senderAddress: "jacob2bernice080@icloud.com",
@@ -43,11 +44,12 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         XCTAssertEqual(message.combinedAnalysis.score, 100)
         XCTAssertEqual(
             message.combinedAnalysis.reason,
-            "Invoice/payment message from free-mail account; "
+            "PayPal brand impersonation; "
+                + "Invoice/payment message from free-mail account; "
                 + "Financial brand/domain mismatch: PayPal; "
                 + "Payment message directs recipient to support phone number"
         )
-        XCTAssertFalse(message.combinedAnalysis.isAutoDeleteCandidate)
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
     }
 
     func testRealWorldExamplesProduceExpectedScoresAndReasons() {
@@ -194,6 +196,50 @@ final class SpamHeuristicsIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(message.senderAnalysis.score, 25)
+        XCTAssertTrue(message.combinedAnalysis.isNukeCandidate)
+    }
+
+    func testMsnPhoneChangeImpersonationIsSelectedForNuke() {
+        let message = makeMessage(
+            senderName: "Msn Changed Request",
+            senderAddress: "dorothyiryatesburgman@pentzero.com",
+            subject: "Phone Number Changed Request on 2026-09-27",
+            decodedMessageText: """
+            Microsoft
+            Update Request
+            Someone submitted a request to change your phone number.
+            Not you? Reject it. REJECT IT
+            """
+        )
+
+        XCTAssertEqual(message.microsoftImpersonationAnalysis.score, 95)
+        XCTAssertEqual(message.combinedAnalysis.riskLevel, .high)
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
+        XCTAssertTrue(message.combinedAnalysis.isNukeCandidate)
+        XCTAssertEqual(
+            message.combinedAnalysis.reason,
+            "Microsoft account/security impersonation: sender domain is not approved"
+        )
+    }
+
+    func testAlibabaOrderImpersonationIsSelectedForNuke() {
+        let message = makeMessage(
+            senderName: "Sales",
+            senderAddress: "sales086@sabeng.it",
+            subject: "RE: RE: Invoice & Signed Contract -NEW ORDER-088408",
+            decodedMessageText: """
+            Alibaba.com
+            Alibaba.com Trade Center
+            New order inquiry
+            View Inquiry
+            View Buyer Information
+            """
+        )
+
+        XCTAssertEqual(message.brandImpersonationAnalysis.score, 100)
+        XCTAssertEqual(message.combinedAnalysis.riskLevel, .high)
+        XCTAssertEqual(message.combinedAnalysis.reason, "Alibaba brand impersonation")
+        XCTAssertTrue(message.combinedAnalysis.isAutoDeleteCandidate)
         XCTAssertTrue(message.combinedAnalysis.isNukeCandidate)
     }
 

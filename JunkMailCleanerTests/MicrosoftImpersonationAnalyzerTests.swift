@@ -12,7 +12,7 @@ final class MicrosoftImpersonationAnalyzerTests: XCTestCase {
         XCTAssertEqual(analysis.score, 95)
         XCTAssertEqual(
             analysis.reason,
-            "Microsoft impersonation: sender domain is not an approved Microsoft domain"
+            "Microsoft account/security impersonation: sender domain is not approved"
         )
     }
 
@@ -35,6 +35,75 @@ final class MicrosoftImpersonationAnalyzerTests: XCTestCase {
 
         XCTAssertFalse(analysis.claimsMicrosoftIdentity)
         XCTAssertEqual(analysis.riskLevel, .low)
+        XCTAssertEqual(analysis.score, 0)
+    }
+
+    func testDisplayNameAloneDoesNotTriggerWithoutAccountSecurityAction() {
+        let analysis = analyze(
+            displayName: "Microsoft",
+            address: "events@unrelated.example",
+            subject: "Join our developer conference"
+        )
+
+        XCTAssertFalse(analysis.claimsMicrosoftIdentity)
+        XCTAssertEqual(analysis.score, 0)
+    }
+
+    func testAccountActionAloneDoesNotTriggerWithoutMicrosoftIdentity() {
+        let analysis = analyze(
+            displayName: "Neighborhood Association",
+            address: "notices@example.org",
+            subject: "Phone number changed request"
+        )
+
+        XCTAssertFalse(analysis.claimsMicrosoftIdentity)
+        XCTAssertEqual(analysis.score, 0)
+    }
+
+    func testTargetMsnPhoneChangeRequestIsHighRisk() {
+        let analysis = analyze(
+            displayName: "Msn Changed Request",
+            address: "dorothyiryatesburgman@pentzero.com",
+            subject: "Phone Number Changed Request on 2026-09-27",
+            decodedMessageText: """
+            Microsoft
+            Update Request
+            Someone submitted a request to change your phone number.
+            Not you? Reject it. REJECT IT
+            """
+        )
+
+        XCTAssertTrue(analysis.claimsMicrosoftIdentity)
+        XCTAssertEqual(analysis.senderDomain, "pentzero.com")
+        XCTAssertEqual(analysis.score, 95)
+        XCTAssertEqual(analysis.riskLevel, .high)
+        XCTAssertEqual(
+            analysis.reason,
+            "Microsoft account/security impersonation: sender domain is not approved"
+        )
+    }
+
+    func testBodyBrandingAndSecurityActionCanTrigger() {
+        let analysis = analyze(
+            displayName: "Account Notification",
+            address: "notice@unrelated.example",
+            subject: "Update request",
+            decodedMessageText: "Microsoft Account — someone submitted a request. Reject it."
+        )
+
+        XCTAssertTrue(analysis.claimsMicrosoftIdentity)
+        XCTAssertEqual(analysis.score, 95)
+    }
+
+    func testConversationalMicrosoftSecurityMentionDoesNotTrigger() {
+        let analysis = analyze(
+            displayName: "Technology Newsletter",
+            address: "news@example.org",
+            subject: "How Microsoft approaches account security",
+            decodedMessageText: "An overview of Microsoft products and security practices."
+        )
+
+        XCTAssertFalse(analysis.claimsMicrosoftIdentity)
         XCTAssertEqual(analysis.score, 0)
     }
 
@@ -87,20 +156,24 @@ final class MicrosoftImpersonationAnalyzerTests: XCTestCase {
         XCTAssertEqual(combined.riskLevel, .high)
         XCTAssertEqual(combined.score, 95)
         XCTAssertTrue(combined.isAutoDeleteCandidate)
-        XCTAssertTrue(combined.reason.contains("Microsoft impersonation"))
+        XCTAssertTrue(combined.reason.contains("Microsoft account/security impersonation"))
     }
 
     private func analyze(
         displayName: String,
         address: String,
         subject: String = "Security notice",
-        authenticationResults: String = ""
+        authenticationResults: String = "",
+        decodedMessageText: String = "",
+        imageText: String = ""
     ) -> MicrosoftImpersonationAnalysis {
         MicrosoftImpersonationAnalyzer.analyze(
             senderDisplayName: displayName,
             senderAddress: address,
             subject: subject,
-            authenticationResults: authenticationResults
+            authenticationResults: authenticationResults,
+            decodedMessageText: decodedMessageText,
+            imageText: imageText
         )
     }
 }

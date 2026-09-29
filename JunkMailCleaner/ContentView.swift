@@ -1,13 +1,16 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var senderLists = SenderListStore()
     @State private var messages: [JunkMailMessage] = []
+    @State private var selectedReferences: Set<MailMessageReference> = []
     @State private var isScanning = false
     @State private var isMoving = false
     @State private var errorMessage: String?
     @State private var resultMessage: String?
     @State private var hasScanned = false
     @State private var hasStartedInitialScan = false
+    @State private var isShowingBlacklist = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +24,11 @@ struct ContentView: View {
             hasStartedInitialScan = true
             scanJunkMail()
         }
+        .sheet(isPresented: $isShowingBlacklist) {
+            BlacklistManagementView(senderLists: senderLists) { address in
+                removeFromBlacklist(address)
+            }
+        }
     }
 
     private var header: some View {
@@ -33,6 +41,16 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            Button {
+                isShowingBlacklist = true
+            } label: {
+                Label(
+                    "Blacklist (\(senderLists.blacklistCount))",
+                    systemImage: "hand.raised.fill"
+                )
+            }
+            .disabled(isMoving)
 
             Button(action: scanJunkMail) {
                 if isScanning {
@@ -100,8 +118,8 @@ struct ContentView: View {
     private var selectionControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button("Nuke", action: movePositiveRiskMessages)
-                    .disabled(positiveRiskMessages.isEmpty || isMoving)
+                Button("Nuke", action: moveSelectedMessages)
+                    .disabled(selectedMessages.isEmpty || isMoving)
 
                 if isMoving {
                     ProgressView()
@@ -126,15 +144,15 @@ struct ContentView: View {
         Table(messages) {
                 TableColumn("") { message in
                     Toggle(
-                        "Included when using Nuke based on deletion evidence",
-                        isOn: .constant(message.combinedAnalysis.isNukeCandidate)
+                        "Include this message when using Nuke",
+                        isOn: selectionBinding(for: message.reference)
                     )
                     .labelsHidden()
-                    .allowsHitTesting(false)
+                    .disabled(isMoving)
                     .help(
-                        message.combinedAnalysis.isNukeCandidate
+                        selectedReferences.contains(message.reference)
                             ? "Included when using Nuke"
-                            : "Not included when using Nuke"
+                            : "Check to include when using Nuke"
                     )
                 }
                 .width(28)
@@ -153,6 +171,27 @@ struct ContentView: View {
                     .padding(.vertical, 2)
                 }
                 .width(min: 190, ideal: 230)
+
+                TableColumn("Sender Status") { message in
+                    HStack(spacing: 6) {
+                        Toggle(
+                            "Blacklist exact sender",
+                            isOn: blacklistBinding(for: message)
+                        )
+                        .labelsHidden()
+                        .tint(.red)
+                        .disabled(isMoving)
+
+                        Label(
+                            senderStatusTitle(message.senderListStatus),
+                            systemImage: senderStatusIcon(message.senderListStatus)
+                        )
+                        .foregroundStyle(senderStatusColor(message.senderListStatus))
+                        .font(.caption)
+                        .lineLimit(1)
+                    }
+                }
+                .width(min: 125, ideal: 145)
 
                 TableColumn("Subject") { message in
                     Text(message.subject.isEmpty ? "(No Subject)" : message.subject)
@@ -195,8 +234,97 @@ struct ContentView: View {
         messages.count { $0.combinedAnalysis.riskLevel == riskLevel }
     }
 
-    private var positiveRiskMessages: [JunkMailMessage] {
-        messages.filter { $0.combinedAnalysis.isNukeCandidate }
+    private var selectedMessages: [JunkMailMessage] {
+        messages.filter { selectedReferences.contains($0.reference) }
+    }
+
+    private func selectionBinding(for reference: MailMessageReference) -> Binding<Bool> {
+        Binding(
+            get: { selectedReferences.contains(reference) },
+            set: { isSelected in
+                if isSelected {
+                    selectedReferences.insert(reference)
+                } else {
+                    selectedReferences.remove(reference)
+                }
+            }
+        )
+    }
+
+    private func blacklistBinding(for message: JunkMailMessage) -> Binding<Bool> {
+        Binding(
+            get: { senderLists.status(for: message.senderAddress) == .blacklisted },
+            set: { isBlacklisted in
+                if isBlacklisted {
+                    senderLists.addToBlacklist(message.senderAddress)
+                } else {
+                    senderLists.removeFromBlacklist(message.senderAddress)
+                }
+                refreshSenderListStatus(for: message.senderAddress)
+            }
+        )
+    }
+
+    private func refreshSenderListStatus(for address: String) {
+        guard let normalizedAddress = SenderListStore.normalize(address) else { return }
+        for index in messages.indices
+        where SenderListStore.normalize(messages[index].senderAddress) == normalizedAddress {
+            let status = senderLists.status(for: messages[index].senderAddress)
+            messages[index].updateSenderListStatus(status)
+            if messages[index].combinedAnalysis.isNukeCandidate {
+                selectedReferences.insert(messages[index].reference)
+            } else {
+                selectedReferences.remove(messages[index].reference)
+            }
+        }
+        messages.sort { first, second in
+            if first.combinedAnalysis.score != second.combinedAnalysis.score {
+                return first.combinedAnalysis.score > second.combinedAnalysis.score
+            }
+            return first.dateReceived > second.dateReceived
+        }
+    }
+
+    private func removeFromBlacklist(_ address: String) {
+        senderLists.removeFromBlacklist(address)
+        refreshSenderListStatus(for: address)
+    }
+
+    private func senderStatusTitle(_ status: SenderListStatus) -> String {
+        switch status {
+        case .whitelisted: "Whitelisted"
+        case .blacklisted: "Blacklisted"
+        case .neither: "Neither"
+        }
+    }
+
+    private func senderStatusIcon(_ status: SenderListStatus) -> String {
+        switch status {
+        case .whitelisted: "checkmark.shield.fill"
+        case .blacklisted: "hand.raised.fill"
+        case .neither: "minus.circle"
+        }
+    }
+
+    private func senderStatusColor(_ status: SenderListStatus) -> Color {
+        switch status {
+        case .whitelisted: .green
+        case .blacklisted: .red
+        case .neither: .secondary
+        }
+    }
+
+    private func replaceMessages(
+        with scannedMessages: [JunkMailMessage],
+        additionallySelecting references: Set<MailMessageReference> = []
+    ) {
+        messages = scannedMessages
+        let displayedReferences = Set(scannedMessages.map(\.reference))
+        let automaticReferences = scannedMessages.compactMap { message in
+            message.combinedAnalysis.isNukeCandidate ? message.reference : nil
+        }
+        selectedReferences = Set(automaticReferences)
+            .union(references.intersection(displayedReferences))
     }
 
     private func scanJunkMail() {
@@ -206,18 +334,24 @@ struct ContentView: View {
 
         Task {
             do {
-                messages = try await MailService.fetchJunkMessages()
+                replaceMessages(
+                    with: try await MailService.fetchJunkMessages(
+                        blacklistedAddresses: senderLists.blacklistedAddresses,
+                        whitelistedAddresses: senderLists.whitelistedAddresses
+                    )
+                )
                 hasScanned = true
             } catch {
                 messages = []
+                selectedReferences = []
                 errorMessage = error.localizedDescription
             }
             isScanning = false
         }
     }
 
-    private func movePositiveRiskMessages() {
-        moveMessagesToTrash(positiveRiskMessages)
+    private func moveSelectedMessages() {
+        moveMessagesToTrash(selectedMessages)
     }
 
     private func moveMessagesToTrash(_ messagesToMove: [JunkMailMessage]) {
@@ -234,7 +368,13 @@ struct ContentView: View {
                 resultMessage = moveResultDescription(moveResult, selectedMessages: messagesToMove)
 
                 do {
-                    messages = try await MailService.fetchJunkMessages()
+                    replaceMessages(
+                        with: try await MailService.fetchJunkMessages(
+                            blacklistedAddresses: senderLists.blacklistedAddresses,
+                            whitelistedAddresses: senderLists.whitelistedAddresses
+                        ),
+                        additionallySelecting: Set(moveResult.failures.map(\.reference))
+                    )
                     hasScanned = true
                 } catch {
                     resultMessage = "\(resultMessage ?? "") The Junk mailbox could not be rescanned: \(error.localizedDescription)"
@@ -277,6 +417,49 @@ struct ContentView: View {
         }
 
         return parts.joined(separator: " ")
+    }
+}
+
+private struct BlacklistManagementView: View {
+    @ObservedObject var senderLists: SenderListStore
+    let remove: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Sender Blacklist")
+                        .font(.title2.bold())
+                    Text("\(senderLists.blacklistCount) blacklisted \(senderLists.blacklistCount == 1 ? "address" : "addresses")")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+
+            if senderLists.blacklistedAddresses.isEmpty {
+                ContentUnavailableView(
+                    "No Blacklisted Senders",
+                    systemImage: "hand.raised",
+                    description: Text("Use the Blacklist checkbox beside a message to add its exact sender address.")
+                )
+            } else {
+                List(senderLists.blacklistedAddresses.sorted(), id: \.self) { address in
+                    HStack {
+                        Text(address)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("Remove", role: .destructive) {
+                            remove(address)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .frame(minWidth: 520, minHeight: 360)
     }
 }
 

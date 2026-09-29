@@ -35,9 +35,15 @@ nonisolated private struct MailMoveRequest {
 }
 
 enum MailService {
-    nonisolated static func fetchJunkMessages() async throws -> [JunkMailMessage] {
+    nonisolated static func fetchJunkMessages(
+        blacklistedAddresses: Set<String> = [],
+        whitelistedAddresses: Set<String> = []
+    ) async throws -> [JunkMailMessage] {
         try await Task.detached(priority: .userInitiated) {
-            try executeScanScript()
+            try executeScanScript(
+                blacklistedAddresses: blacklistedAddresses,
+                whitelistedAddresses: whitelistedAddresses
+            )
         }.value
     }
 
@@ -49,7 +55,10 @@ enum MailService {
         }.value
     }
 
-    nonisolated private static func executeScanScript() throws -> [JunkMailMessage] {
+    nonisolated private static func executeScanScript(
+        blacklistedAddresses: Set<String>,
+        whitelistedAddresses: Set<String>
+    ) throws -> [JunkMailMessage] {
         guard let script = NSAppleScript(source: scanScript) else {
             throw MailServiceError.couldNotCreateScript
         }
@@ -190,6 +199,15 @@ enum MailService {
         let messages = metadata.map { metadata in
             let shouldAnalyzeContent = metadata.senderAnalysis.riskLevel != .high
             let content = contentByMessageID[metadata.reference.messageID]
+            let normalizedAddress = SenderListStore.normalize(metadata.senderAddress)
+            let senderListStatus: SenderListStatus
+            if normalizedAddress.map(whitelistedAddresses.contains) == true {
+                senderListStatus = .whitelisted
+            } else if normalizedAddress.map(blacklistedAddresses.contains) == true {
+                senderListStatus = .blacklisted
+            } else {
+                senderListStatus = .neither
+            }
             let message = JunkMailMessage(
                 reference: metadata.reference,
                 senderName: metadata.senderName,
@@ -204,7 +222,8 @@ enum MailService {
                 imageText: content?.imageText ?? "",
                 calendarText: content?.calendarText ?? "",
                 hasCalendarPart: content?.hasCalendarPart ?? false,
-                decodedMessageText: content?.decodedMessageText ?? ""
+                decodedMessageText: content?.decodedMessageText ?? "",
+                senderListStatus: senderListStatus
             )
             logAnalysis(for: message)
             return message
@@ -676,13 +695,14 @@ enum MailService {
             + "ImpersonationScore=\(message.microsoftImpersonationAnalysis.score); "
             + "CalendarFraudScore=\(message.calendarInviteFraudAnalysis.score); "
             + "CommercialMessageScore=\(message.commercialMessageAnalysis.score); "
+            + "SenderListStatus=\(message.senderListStatus.rawValue); "
             + "FinalRisk=\(message.combinedAnalysis.riskLevel.rawValue) "
             + "(\(message.combinedAnalysis.score)); "
             + "AutoDeleteCandidate=\(message.combinedAnalysis.isAutoDeleteCandidate)"
         )
-        if message.brandImpersonationAnalysis.claimedBrand == "DocuSign" {
+        if let brand = message.brandImpersonationAnalysis.claimedBrand {
             print(
-                "[JunkMailCleaner] Brand=DocuSign; "
+                "[JunkMailCleaner] Brand=\(brand); "
                     + "FromDomain=\(message.brandImpersonationAnalysis.senderDomain ?? "none"); "
                     + "TrustedBrandDomain="
                     + "\(message.brandImpersonationAnalysis.isTrustedBrandDomain == true); "

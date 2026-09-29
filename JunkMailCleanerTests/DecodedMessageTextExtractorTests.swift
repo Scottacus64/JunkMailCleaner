@@ -65,6 +65,33 @@ final class DecodedMessageTextExtractorTests: XCTestCase {
         XCTAssertEqual(analysis.score, 0)
     }
 
+    func testAlibabaHTMLBrandingAndLinkTextFeedSharedBrandAnalysis() {
+        let rawMessage = """
+        MIME-Version: 1.0
+        Content-Type: text/html; charset=utf-8
+
+        <html><body>
+          <img src="logo.png" alt="Alibaba.com Trade Center"
+               title="Alibaba.com buyer inquiry">
+          <a href="https://example.invalid">View Inquiry</a>
+          <p>New order — view buyer information</p>
+        </body></html>
+        """
+
+        let extracted = DecodedMessageTextExtractor.extract(from: rawMessage)
+        let analysis = BrandImpersonationAnalyzer.analyze(
+            senderDisplayName: "Sales",
+            senderAddress: "sales086@sabeng.it",
+            subject: "Invoice and signed contract",
+            decodedMessageText: extracted.htmlText
+        )
+
+        XCTAssertTrue(extracted.htmlText.contains("Alibaba.com Trade Center"))
+        XCTAssertTrue(extracted.htmlText.contains("View Inquiry"))
+        XCTAssertEqual(analysis.reason, "Alibaba brand impersonation")
+        XCTAssertTrue(analysis.isAutoDeleteCandidate)
+    }
+
     func testTextAttachmentIsNotTreatedAsMessageBody() {
         let rawMessage = """
         Content-Type: text/plain; charset=utf-8
