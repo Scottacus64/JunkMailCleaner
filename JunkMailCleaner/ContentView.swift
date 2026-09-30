@@ -4,6 +4,8 @@ struct ContentView: View {
     @StateObject private var senderLists = SenderListStore()
     @State private var messages: [JunkMailMessage] = []
     @State private var selectedReferences: Set<MailMessageReference> = []
+    @State private var tableSelection: MailMessageReference?
+    @State private var inspectedMessage: JunkMailMessage?
     @State private var isScanning = false
     @State private var isMoving = false
     @State private var errorMessage: String?
@@ -28,6 +30,13 @@ struct ContentView: View {
             BlacklistManagementView(senderLists: senderLists) { address in
                 removeFromBlacklist(address)
             }
+        }
+        .sheet(item: $inspectedMessage) { message in
+            MessageInspectorView(
+                message: message,
+                senderLists: senderLists,
+                senderStatusChanged: refreshSenderListStatus
+            )
         }
     }
 
@@ -121,6 +130,9 @@ struct ContentView: View {
                 Button("Nuke", action: moveSelectedMessages)
                     .disabled(selectedMessages.isEmpty || isMoving)
 
+                Button("Inspect Message", action: inspectSelectedMessage)
+                    .disabled(selectedMessageForInspection == nil || isMoving)
+
                 if isMoving {
                     ProgressView()
                         .controlSize(.small)
@@ -141,7 +153,7 @@ struct ContentView: View {
     }
 
     private var messageTable: some View {
-        Table(messages) {
+        Table(messages, selection: $tableSelection) {
                 TableColumn("") { message in
                     Toggle(
                         "Include this message when using Nuke",
@@ -158,62 +170,74 @@ struct ContentView: View {
                 .width(28)
 
                 TableColumn("Sender") { message in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(message.senderName.isEmpty ? message.senderAddress : message.senderName)
-                            .lineLimit(1)
-                        if !message.senderName.isEmpty {
-                            Text(message.senderAddress)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    inspectableCell(message) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(message.senderName.isEmpty ? message.senderAddress : message.senderName)
                                 .lineLimit(1)
+                            if !message.senderName.isEmpty {
+                                Text(message.senderAddress)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 2)
                 }
                 .width(min: 190, ideal: 230)
 
                 TableColumn("Sender Status") { message in
-                    HStack(spacing: 6) {
-                        Toggle(
-                            "Blacklist exact sender",
-                            isOn: blacklistBinding(for: message)
-                        )
-                        .labelsHidden()
-                        .tint(.red)
-                        .disabled(isMoving)
+                    inspectableCell(message) {
+                        HStack(spacing: 6) {
+                            Toggle(
+                                "Blacklist exact sender",
+                                isOn: blacklistBinding(for: message)
+                            )
+                            .labelsHidden()
+                            .tint(.red)
+                            .disabled(isMoving)
 
-                        Label(
-                            senderStatusTitle(message.senderListStatus),
-                            systemImage: senderStatusIcon(message.senderListStatus)
-                        )
-                        .foregroundStyle(senderStatusColor(message.senderListStatus))
-                        .font(.caption)
-                        .lineLimit(1)
+                            Label(
+                                senderStatusTitle(message.senderListStatus),
+                                systemImage: senderStatusIcon(message.senderListStatus)
+                            )
+                            .foregroundStyle(senderStatusColor(message.senderListStatus))
+                            .font(.caption)
+                            .lineLimit(1)
+                        }
                     }
                 }
                 .width(min: 125, ideal: 145)
 
                 TableColumn("Subject") { message in
-                    Text(message.subject.isEmpty ? "(No Subject)" : message.subject)
-                        .lineLimit(2)
+                    inspectableCell(message) {
+                        Text(message.subject.isEmpty ? "(No Subject)" : message.subject)
+                            .lineLimit(2)
+                    }
                 }
                 .width(min: 260, ideal: 360)
 
                 TableColumn("Date Received") { message in
-                    Text(message.dateReceived, format: .dateTime.month().day().year().hour().minute())
+                    inspectableCell(message) {
+                        Text(message.dateReceived, format: .dateTime.month().day().year().hour().minute())
+                    }
                 }
                 .width(min: 155, ideal: 175)
 
                 TableColumn("Risk") { message in
-                    Text("\(message.combinedAnalysis.riskLevel.rawValue) (\(message.combinedAnalysis.score))")
-                        .fontWeight(message.combinedAnalysis.riskLevel == .high ? .semibold : .regular)
+                    inspectableCell(message) {
+                        Text("\(message.combinedAnalysis.riskLevel.rawValue) (\(message.combinedAnalysis.score))")
+                            .fontWeight(message.combinedAnalysis.riskLevel == .high ? .semibold : .regular)
+                    }
                 }
                 .width(min: 85, ideal: 95)
 
                 TableColumn("Reason") { message in
-                    Text(message.combinedAnalysis.reason)
-                        .lineLimit(2)
-                        .help(message.combinedAnalysis.reason)
+                    inspectableCell(message) {
+                        Text(message.combinedAnalysis.reason)
+                            .lineLimit(2)
+                            .help(message.combinedAnalysis.reason)
+                    }
                 }
                 .width(min: 250, ideal: 320)
 
@@ -236,6 +260,41 @@ struct ContentView: View {
 
     private var selectedMessages: [JunkMailMessage] {
         messages.filter { selectedReferences.contains($0.reference) }
+    }
+
+    private var selectedMessageForInspection: JunkMailMessage? {
+        guard let reference = tableSelection else { return nil }
+        return MessageInspectorSelection.message(for: reference, in: messages)
+    }
+
+    private func inspectSelectedMessage() {
+        if let selectedMessageForInspection {
+            inspectedMessage = selectedMessageForInspection
+        }
+    }
+
+    private func inspect(_ message: JunkMailMessage) {
+        tableSelection = message.reference
+        inspectedMessage = message
+    }
+
+    private func inspectableCell<Content: View>(
+        _ message: JunkMailMessage,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture(count: 2).onEnded {
+                    inspect(message)
+                }
+            )
+            .contextMenu {
+                Button("Inspect Message") {
+                    inspect(message)
+                }
+            }
     }
 
     private func selectionBinding(for reference: MailMessageReference) -> Binding<Bool> {
@@ -320,6 +379,9 @@ struct ContentView: View {
     ) {
         messages = scannedMessages
         let displayedReferences = Set(scannedMessages.map(\.reference))
+        if let tableSelection, !displayedReferences.contains(tableSelection) {
+            self.tableSelection = nil
+        }
         let automaticReferences = scannedMessages.compactMap { message in
             message.combinedAnalysis.isNukeCandidate ? message.reference : nil
         }
@@ -334,12 +396,11 @@ struct ContentView: View {
 
         Task {
             do {
-                replaceMessages(
-                    with: try await MailService.fetchJunkMessages(
+                let scannedMessages = try await MailService.fetchJunkMessages(
                         blacklistedAddresses: senderLists.blacklistedAddresses,
                         whitelistedAddresses: senderLists.whitelistedAddresses
                     )
-                )
+                replaceMessages(with: scannedMessages)
                 hasScanned = true
             } catch {
                 messages = []

@@ -12,6 +12,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let reference: MailMessageReference
     let senderName: String
     let senderAddress: String
+    let replyToAddress: String
     let subject: String
     let dateReceived: Date
     let senderAnalysis: SenderAddressAnalysis
@@ -22,6 +23,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let invoiceFraudAnalysis: InvoiceFraudAnalysis
     let calendarInviteFraudAnalysis: CalendarInviteFraudAnalysis
     let commercialMessageAnalysis: CommercialMessageAnalysis
+    let cachedInspectionSource: MessageInspectionSource?
     private(set) var senderListStatus: SenderListStatus
     private(set) var combinedAnalysis: CombinedMessageAnalysis
 
@@ -40,15 +42,18 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         calendarText: String = "",
         hasCalendarPart: Bool = false,
         decodedMessageText: String = "",
-        senderListStatus: SenderListStatus = .neither
+        senderListStatus: SenderListStatus = .neither,
+        cachedInspectionSource: MessageInspectionSource? = nil
     ) {
         self.reference = reference
         self.senderName = senderName
         self.senderAddress = senderAddress
+        self.replyToAddress = replyTo
         self.subject = subject
         self.dateReceived = dateReceived
         self.senderAnalysis = senderAnalysis
         self.senderListStatus = senderListStatus
+        self.cachedInspectionSource = cachedInspectionSource
         let contentAnalysis = analyzeContent
             ? MessageContentAnalyzer.analyze(
                 senderDisplayName: senderName,

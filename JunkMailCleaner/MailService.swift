@@ -27,6 +27,7 @@ nonisolated private struct MessageContentFields {
     let calendarText: String
     let hasCalendarPart: Bool
     let decodedMessageText: String
+    let cachedInspectionSource: MessageInspectionSource?
 }
 
 nonisolated private struct MailMoveRequest {
@@ -35,6 +36,8 @@ nonisolated private struct MailMoveRequest {
 }
 
 enum MailService {
+    nonisolated private static let maximumCachedInspectionSourceBytes = 8 * 1_024 * 1_024
+
     nonisolated static func fetchJunkMessages(
         blacklistedAddresses: Set<String> = [],
         whitelistedAddresses: Set<String> = []
@@ -52,6 +55,14 @@ enum MailService {
     ) async throws -> MailMoveResult {
         try await Task.detached(priority: .userInitiated) {
             try executeMoveScript(references)
+        }.value
+    }
+
+    nonisolated static func fetchMessageInspectionSource(
+        for reference: MailMessageReference
+    ) async throws -> MessageInspectionSource {
+        try await Task.detached(priority: .userInitiated) {
+            try executeInspectionScript(reference)
         }.value
     }
 
@@ -223,7 +234,8 @@ enum MailService {
                 calendarText: content?.calendarText ?? "",
                 hasCalendarPart: content?.hasCalendarPart ?? false,
                 decodedMessageText: content?.decodedMessageText ?? "",
-                senderListStatus: senderListStatus
+                senderListStatus: senderListStatus,
+                cachedInspectionSource: content?.cachedInspectionSource
             )
             logAnalysis(for: message)
             return message
@@ -275,16 +287,21 @@ enum MailService {
 
             if row.atIndex(2)?.booleanValue == true {
                 let rawSource = row.atIndex(5)?.stringValue ?? ""
+                let mailBody = row.atIndex(3)?.stringValue ?? ""
                 let ocrResult = EmbeddedImageOCRAnalyzer.recognizeText(in: rawSource)
                 let calendarExtraction = CalendarAttachmentExtractor.extract(from: rawSource)
                 let decodedMessageText = DecodedMessageTextExtractor.extract(from: rawSource)
                 fieldsByMessageID[messageID] = MessageContentFields(
-                    body: row.atIndex(3)?.stringValue ?? "",
+                    body: mailBody,
                     authenticationResults: row.atIndex(4)?.stringValue ?? "",
                     imageText: ocrResult.recognizedText,
                     calendarText: calendarExtraction.text,
                     hasCalendarPart: calendarExtraction.hasCalendarPart,
-                    decodedMessageText: decodedMessageText.combinedText
+                    decodedMessageText: decodedMessageText.combinedText,
+                    cachedInspectionSource: !rawSource.isEmpty
+                        && rawSource.utf8.count <= maximumCachedInspectionSourceBytes
+                        ? MessageInspectionSource(rawSource: rawSource, mailBody: mailBody)
+                        : nil
                 )
             } else {
                 fieldsByMessageID.removeValue(forKey: messageID)
@@ -380,6 +397,43 @@ enum MailService {
         }
 
         return MailMoveResult(movedReferences: movedReferences, failures: failures)
+    }
+
+    nonisolated private static func executeInspectionScript(
+        _ reference: MailMessageReference
+    ) throws -> MessageInspectionSource {
+        guard !reference.accountIdentifier.isEmpty,
+              !reference.messageID.isEmpty || !reference.libraryIdentifier.isEmpty else {
+            throw MailServiceError.invalidSelection
+        }
+        guard let script = NSAppleScript(source: inspectionScript(reference: reference)) else {
+            throw MailServiceError.couldNotCreateScript
+        }
+
+        var errorInfo: NSDictionary?
+        let result = script.executeAndReturnError(&errorInfo)
+        if let errorInfo {
+            throw MailServiceError.appleScript(
+                number: errorInfo[NSAppleScript.errorNumber] as? Int,
+                message: errorInfo[NSAppleScript.errorMessage] as? String
+            )
+        }
+        guard result.numberOfItems == 2 else {
+            throw MailServiceError.appleScript(
+                number: 1005,
+                message: "Apple Mail did not return the selected message."
+            )
+        }
+        let rawSource = result.atIndex(1)?.stringValue ?? ""
+        let mailBody = result.atIndex(2)?.stringValue ?? ""
+        #if DEBUG
+        print(
+            "[JunkMailCleaner][Inspector][MailService] source property returned "
+                + "chars=\(rawSource.count) bytes=\(rawSource.utf8.count); "
+                + "content property chars=\(mailBody.count)"
+        )
+        #endif
+        return MessageInspectionSource(rawSource: rawSource, mailBody: mailBody)
     }
 
     nonisolated private static let scanScript = #"""
@@ -559,6 +613,75 @@ enum MailService {
                 end repeat
 
                 return resultRows
+            end tell
+        end using terms from
+        """#
+    }
+
+    nonisolated static func inspectionScript(reference: MailMessageReference) -> String {
+        #"""
+        using terms from application "Mail"
+            tell application id "com.apple.mail"
+                set scannedAccountID to \#(appleScriptString(reference.accountIdentifier))
+                set requestedMessageID to \#(appleScriptString(reference.messageID))
+                set requestedLibraryID to \#(appleScriptString(reference.libraryIdentifier))
+                set hotmailAccount to missing value
+
+                repeat with candidateAccount in accounts
+                    if ((id of candidateAccount) as text) is scannedAccountID then
+                        set hotmailAccount to candidateAccount
+                        exit repeat
+                    end if
+                end repeat
+                if hotmailAccount is missing value then
+                    error "The scanned Mail account could not be found." number 1003
+                end if
+
+                set junkMailboxName to missing value
+                repeat with candidateMailbox in mailboxes of hotmailAccount
+                    set mailboxName to name of candidateMailbox
+                    ignoring case
+                        if mailboxName is "Junk" or mailboxName is "Junk E-mail" or mailboxName is "Junk Email" or mailboxName is "Spam" then
+                            set junkMailboxName to mailboxName
+                            exit repeat
+                        end if
+                    end ignoring
+                end repeat
+                if junkMailboxName is missing value then
+                    error "The Junk mailbox for the scanned account could not be found." number 1002
+                end if
+
+                set hotmailJunkMailbox to mailbox junkMailboxName of hotmailAccount
+                set matchedMessage to missing value
+                repeat with candidateMessage in messages of hotmailJunkMailbox
+                    set candidateLibraryID to (id of candidateMessage) as text
+                    set candidateMessageID to ""
+                    try
+                        set candidateMessageID to message id of candidateMessage
+                        if candidateMessageID is missing value then set candidateMessageID to ""
+                    end try
+
+                    if (requestedLibraryID is not "" and candidateLibraryID is requestedLibraryID) or (requestedLibraryID is "" and requestedMessageID is not "" and candidateMessageID is requestedMessageID) then
+                        set matchedMessage to candidateMessage
+                        exit repeat
+                    end if
+                end repeat
+
+                if matchedMessage is missing value then
+                    error "Message is no longer in the Junk mailbox." number 1005
+                end if
+
+                set messageSource to ""
+                set messageBody to ""
+                try
+                    set messageSource to source of matchedMessage as text
+                    if messageSource is missing value then set messageSource to ""
+                end try
+                try
+                    set messageBody to content of matchedMessage as text
+                    if messageBody is missing value then set messageBody to ""
+                end try
+                return {messageSource, messageBody}
             end tell
         end using terms from
         """#
