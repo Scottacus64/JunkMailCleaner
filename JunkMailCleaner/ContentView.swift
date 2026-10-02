@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var senderLists = SenderListStore()
+    @StateObject private var nukeStatistics = NukeStatisticsStore()
     @State private var messages: [JunkMailMessage] = []
     @State private var selectedReferences: Set<MailMessageReference> = []
     @State private var tableSelection: MailMessageReference?
@@ -35,7 +36,8 @@ struct ContentView: View {
             MessageInspectorView(
                 message: message,
                 senderLists: senderLists,
-                senderStatusChanged: refreshSenderListStatus
+                senderStatusChanged: refreshSenderListStatus,
+                messageDeleted: removeDeletedMessage
             )
         }
     }
@@ -50,6 +52,12 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            headerStatistic("Total nuked", value: nukeStatistics.totalNuked.formatted())
+            headerStatistic(
+                "Average per day",
+                value: nukeStatistics.averagePerDay.formatted(.number.precision(.fractionLength(1)))
+            )
 
             Button {
                 isShowingBlacklist = true
@@ -73,6 +81,17 @@ struct ContentView: View {
             .keyboardShortcut(.defaultAction)
         }
         .padding()
+    }
+
+    private func headerStatistic(_ title: String, value: String) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline.monospacedDigit())
+        }
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -130,9 +149,6 @@ struct ContentView: View {
                 Button("Nuke", action: moveSelectedMessages)
                     .disabled(selectedMessages.isEmpty || isMoving)
 
-                Button("Inspect Message", action: inspectSelectedMessage)
-                    .disabled(selectedMessageForInspection == nil || isMoving)
-
                 if isMoving {
                     ProgressView()
                         .controlSize(.small)
@@ -157,10 +173,10 @@ struct ContentView: View {
                 TableColumn("") { message in
                     Toggle(
                         "Include this message when using Nuke",
-                        isOn: selectionBinding(for: message.reference)
+                        isOn: selectionBinding(for: message)
                     )
                     .labelsHidden()
-                    .disabled(isMoving)
+                    .disabled(isMoving || message.senderListStatus == .whitelisted)
                     .help(
                         selectedReferences.contains(message.reference)
                             ? "Included when using Nuke"
@@ -262,17 +278,6 @@ struct ContentView: View {
         messages.filter { selectedReferences.contains($0.reference) }
     }
 
-    private var selectedMessageForInspection: JunkMailMessage? {
-        guard let reference = tableSelection else { return nil }
-        return MessageInspectorSelection.message(for: reference, in: messages)
-    }
-
-    private func inspectSelectedMessage() {
-        if let selectedMessageForInspection {
-            inspectedMessage = selectedMessageForInspection
-        }
-    }
-
     private func inspect(_ message: JunkMailMessage) {
         tableSelection = message.reference
         inspectedMessage = message
@@ -297,14 +302,17 @@ struct ContentView: View {
             }
     }
 
-    private func selectionBinding(for reference: MailMessageReference) -> Binding<Bool> {
+    private func selectionBinding(for message: JunkMailMessage) -> Binding<Bool> {
         Binding(
-            get: { selectedReferences.contains(reference) },
+            get: {
+                message.senderListStatus != .whitelisted
+                    && selectedReferences.contains(message.reference)
+            },
             set: { isSelected in
-                if isSelected {
-                    selectedReferences.insert(reference)
+                if isSelected, message.senderListStatus != .whitelisted {
+                    selectedReferences.insert(message.reference)
                 } else {
-                    selectedReferences.remove(reference)
+                    selectedReferences.remove(message.reference)
                 }
             }
         )
@@ -330,7 +338,7 @@ struct ContentView: View {
         where SenderListStore.normalize(messages[index].senderAddress) == normalizedAddress {
             let status = senderLists.status(for: messages[index].senderAddress)
             messages[index].updateSenderListStatus(status)
-            if messages[index].combinedAnalysis.isNukeCandidate {
+            if status != .whitelisted, messages[index].combinedAnalysis.isNukeCandidate {
                 selectedReferences.insert(messages[index].reference)
             } else {
                 selectedReferences.remove(messages[index].reference)
@@ -383,10 +391,17 @@ struct ContentView: View {
             self.tableSelection = nil
         }
         let automaticReferences = scannedMessages.compactMap { message in
-            message.combinedAnalysis.isNukeCandidate ? message.reference : nil
+            message.senderListStatus != .whitelisted && message.combinedAnalysis.isNukeCandidate
+                ? message.reference
+                : nil
+        }
+        let eligibleAdditionalReferences = references.filter { reference in
+            scannedMessages.contains { message in
+                message.reference == reference && message.senderListStatus != .whitelisted
+            }
         }
         selectedReferences = Set(automaticReferences)
-            .union(references.intersection(displayedReferences))
+            .union(eligibleAdditionalReferences.intersection(displayedReferences))
     }
 
     private func scanJunkMail() {
@@ -415,6 +430,15 @@ struct ContentView: View {
         moveMessagesToTrash(selectedMessages)
     }
 
+    private func removeDeletedMessage(_ deletedMessage: JunkMailMessage) {
+        messages.removeAll { $0.reference == deletedMessage.reference }
+        selectedReferences.remove(deletedMessage.reference)
+        if tableSelection == deletedMessage.reference {
+            tableSelection = nil
+        }
+        resultMessage = "Message moved to Trash without nuking it."
+    }
+
     private func moveMessagesToTrash(_ messagesToMove: [JunkMailMessage]) {
         guard !messagesToMove.isEmpty else { return }
 
@@ -426,6 +450,10 @@ struct ContentView: View {
                 let moveResult = try await MailService.moveMessagesToTrash(
                     messagesToMove.map(\.reference)
                 )
+                let movedSentDates = messagesToMove.compactMap { message in
+                    moveResult.movedReferences.contains(message.reference) ? message.dateSent : nil
+                }
+                nukeStatistics.recordNukedMessages(sentDates: movedSentDates)
                 resultMessage = moveResultDescription(moveResult, selectedMessages: messagesToMove)
 
                 do {

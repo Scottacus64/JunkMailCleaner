@@ -15,6 +15,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
     let replyToAddress: String
     let subject: String
     let dateReceived: Date
+    let dateSent: Date
     let senderAnalysis: SenderAddressAnalysis
     let contentAnalysis: MessageContentAnalysis
     let bodyTextAnalysis: BodyTextAnalysis
@@ -36,6 +37,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         replyTo: String,
         subject: String,
         dateReceived: Date,
+        dateSent: Date? = nil,
         body: String,
         authenticationResults: String,
         imageText: String = "",
@@ -51,6 +53,7 @@ nonisolated struct JunkMailMessage: Identifiable, Sendable {
         self.replyToAddress = replyTo
         self.subject = subject
         self.dateReceived = dateReceived
+        self.dateSent = dateSent ?? dateReceived
         self.senderAnalysis = senderAnalysis
         self.senderListStatus = senderListStatus
         self.cachedInspectionSource = cachedInspectionSource

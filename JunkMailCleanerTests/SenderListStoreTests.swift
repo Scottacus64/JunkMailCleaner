@@ -84,6 +84,29 @@ final class SenderListStoreTests: XCTestCase {
         }
     }
 
+    func testWhitelistedSenderIsNeverANukeCandidate() {
+        withStore { store, _ in
+            store.addToWhitelist("dangerous@parcel-delivery.top")
+            let message = JunkMailMessage(
+                reference: reference,
+                senderName: "Urgent Delivery",
+                senderAddress: "dangerous@parcel-delivery.top",
+                senderAnalysis: SenderAddressAnalyzer.analyze("dangerous@parcel-delivery.top"),
+                analyzeContent: true,
+                replyTo: "",
+                subject: "Urgent: claim your suspended parcel",
+                dateReceived: Date(timeIntervalSince1970: 0),
+                body: "Act immediately to claim your reward",
+                authenticationResults: "",
+                senderListStatus: store.status(for: "dangerous@parcel-delivery.top")
+            )
+
+            XCTAssertEqual(message.senderListStatus, .whitelisted)
+            XCTAssertFalse(message.combinedAnalysis.isNukeCandidate)
+            XCTAssertFalse(message.combinedAnalysis.isAutoDeleteCandidate)
+        }
+    }
+
     private func withStore(
         _ body: (SenderListStore, UserDefaults) -> Void
     ) {

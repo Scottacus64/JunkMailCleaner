@@ -5,6 +5,7 @@ struct MessageInspectorView: View {
     @State private var message: JunkMailMessage
     @ObservedObject var senderLists: SenderListStore
     let senderStatusChanged: (String) -> Void
+    let messageDeleted: (JunkMailMessage) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var inspectionData: MessageInspectionData?
@@ -12,15 +13,19 @@ struct MessageInspectorView: View {
     @State private var loadError: String?
     @State private var allowsRemoteImages = false
     @State private var pendingLink: EmailLink?
+    @State private var isDeleting = false
+    @State private var deleteError: String?
 
     init(
         message: JunkMailMessage,
         senderLists: SenderListStore,
-        senderStatusChanged: @escaping (String) -> Void
+        senderStatusChanged: @escaping (String) -> Void,
+        messageDeleted: @escaping (JunkMailMessage) -> Void
     ) {
         _message = State(initialValue: message)
         self.senderLists = senderLists
         self.senderStatusChanged = senderStatusChanged
+        self.messageDeleted = messageDeleted
     }
 
     var body: some View {
@@ -68,6 +73,17 @@ struct MessageInspectorView: View {
                 Text("Destination:\n\(link.destination)")
             }
         }
+        .alert(
+            "Unable to Delete Message",
+            isPresented: Binding(
+                get: { deleteError != nil },
+                set: { if !$0 { deleteError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteError ?? "The message could not be moved to Trash.")
+        }
     }
 
     private var header: some View {
@@ -90,6 +106,15 @@ struct MessageInspectorView: View {
                 VStack(alignment: .trailing, spacing: 8) {
                     HStack(spacing: 12) {
                         senderStatusLabel
+                        Button(role: .destructive, action: deleteMessage) {
+                            if isDeleting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Label("Delete Message", systemImage: "trash")
+                            }
+                        }
+                        .disabled(isDeleting)
                         Button("Close") {
                             dismiss()
                         }
@@ -470,6 +495,28 @@ struct MessageInspectorView: View {
     private func updateSenderStatus() {
         message.updateSenderListStatus(senderLists.status(for: message.senderAddress))
         senderStatusChanged(message.senderAddress)
+    }
+
+    private func deleteMessage() {
+        guard !isDeleting else { return }
+        isDeleting = true
+        deleteError = nil
+
+        Task {
+            do {
+                let result = try await MailService.moveMessagesToTrash([message.reference])
+                if result.movedReferences.contains(message.reference) {
+                    messageDeleted(message)
+                    dismiss()
+                } else {
+                    deleteError = result.failures.first?.message
+                        ?? "Apple Mail did not confirm that the message was moved to Trash."
+                }
+            } catch {
+                deleteError = error.localizedDescription
+            }
+            isDeleting = false
+        }
     }
 
     private var fromValue: String {

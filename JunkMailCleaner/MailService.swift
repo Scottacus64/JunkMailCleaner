@@ -17,6 +17,7 @@ nonisolated private struct ScannedMessageMetadata {
     let replyTo: String
     let subject: String
     let dateReceived: Date
+    let dateSent: Date
     let senderAnalysis: SenderAddressAnalysis
 }
 
@@ -93,7 +94,7 @@ enum MailService {
 
         var metadata: [ScannedMessageMetadata] = []
         for index in 1...result.numberOfItems {
-            guard let row = result.atIndex(index), row.numberOfItems == 8 else {
+            guard let row = result.atIndex(index), row.numberOfItems == 9 else {
                 continue
             }
 
@@ -106,7 +107,8 @@ enum MailService {
             let subject = row.atIndex(7)?.stringValue ?? ""
             guard !accountIdentifier.isEmpty,
                   !libraryIdentifier.isEmpty,
-                  let dateReceived = row.atIndex(8)?.dateValue else {
+                  let dateReceived = row.atIndex(8)?.dateValue,
+                  let dateSent = row.atIndex(9)?.dateValue else {
                 continue
             }
 
@@ -122,6 +124,7 @@ enum MailService {
                     replyTo: replyTo,
                     subject: subject,
                     dateReceived: dateReceived,
+                    dateSent: dateSent,
                     senderAnalysis: SenderAddressAnalyzer.analyze(senderAddress)
                 )
             )
@@ -228,6 +231,7 @@ enum MailService {
                 replyTo: metadata.replyTo,
                 subject: metadata.subject,
                 dateReceived: metadata.dateReceived,
+                dateSent: metadata.dateSent,
                 body: content?.body ?? "",
                 authenticationResults: content?.authenticationResults ?? "",
                 imageText: content?.imageText ?? "",
@@ -492,7 +496,13 @@ enum MailService {
                     set replyToAddress to reply to of mailMessage
                     if replyToAddress is missing value then set replyToAddress to ""
                 end try
-                set end of messageRows to {accountIdentifier, libraryIdentifier, stableMessageID, senderName, senderAddress, replyToAddress, subject of mailMessage, date received of mailMessage}
+                set receivedDate to date received of mailMessage
+                set sentDate to receivedDate
+                try
+                    set sentDate to date sent of mailMessage
+                    if sentDate is missing value then set sentDate to receivedDate
+                end try
+                set end of messageRows to {accountIdentifier, libraryIdentifier, stableMessageID, senderName, senderAddress, replyToAddress, subject of mailMessage, receivedDate, sentDate}
             end repeat
 
             return messageRows

@@ -427,19 +427,22 @@ nonisolated enum CombinedMessageAnalyzer {
             reasons.append(senderAnalysis.reason)
         }
 
+        let isEligibleForNuking = senderListStatus != .whitelisted
         return CombinedMessageAnalysis(
             score: max(existingEvidenceScore, commercialMessageAnalysis.score),
             riskLevel: riskLevel,
             reason: reasons.joined(separator: "; "),
-            isAutoDeleteCandidate: senderAnalysis.isHighRiskForAutomaticDeletion
-                || contentAnalysis.isAutoDeleteCandidate
-                || bodyTextAnalysis.isAutoDeleteCandidate
-                || microsoftImpersonationAnalysis.riskLevel == .high
-                || brandImpersonationAnalysis.isAutoDeleteCandidate
-                || calendarInviteFraudAnalysis.isAutoDeleteCandidate
-                || commercialMessageAnalysis.isAutoDeleteCandidate,
-            isNukeCandidate: existingEvidenceScore > 0
-                || commercialMessageAnalysis.hasExplicitAdvertisingDisclosure
+            isAutoDeleteCandidate: isEligibleForNuking
+                && (senderAnalysis.isHighRiskForAutomaticDeletion
+                    || contentAnalysis.isAutoDeleteCandidate
+                    || bodyTextAnalysis.isAutoDeleteCandidate
+                    || microsoftImpersonationAnalysis.riskLevel == .high
+                    || brandImpersonationAnalysis.isAutoDeleteCandidate
+                    || calendarInviteFraudAnalysis.isAutoDeleteCandidate
+                    || commercialMessageAnalysis.isAutoDeleteCandidate),
+            isNukeCandidate: isEligibleForNuking
+                && (existingEvidenceScore > 0
+                    || commercialMessageAnalysis.hasExplicitAdvertisingDisclosure)
         )
     }
 }
